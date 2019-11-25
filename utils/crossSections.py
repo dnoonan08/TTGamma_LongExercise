@@ -4,25 +4,25 @@ lumis = {2016 : 35860.,
          }
 
 crossSections = {
-    'TTGamma_SingleLept'  : 5.1325 ,
-    'TTGamma_Dilepton'    : 1.5002 ,
-    'TTGamma_Hadronic'    : 4.1045 ,
+    'TTGamma_SingleLept'  : 10.234 ,
+    'TTGamma_Dilepton'    : 2.4243 ,
+    'TTGamma_Hadronic'    : 10.528 ,
 
-    'TTGamma_SingleLept_small'  : 5.1325 ,
-    'TTGamma_Dilepton_small'    : 1.5002 ,
-    'TTGamma_Hadronic_small'    : 4.1045 ,
+    'TTGamma_SingleLept_small'  : 10.234 ,
+    'TTGamma_Dilepton_small'    : 2.4243 ,
+    'TTGamma_Hadronic_small'    : 10.528 ,
 
-    'TTGamma_SingleLept_Old'  : 5.1325 ,
-    'TTGamma_Dilepton_Old'    : 1.5002 ,
-    'TTGamma_Hadronic_Old'    : 4.1045 ,
+    'TTGamma_SingleLept_Old'  : 10.234 ,
+    'TTGamma_Dilepton_Old'    : 2.4243 ,
+    'TTGamma_Hadronic_Old'    : 10.528 ,
 
-    'TTGamma_Hadronic_Pt100'    :  0.1251,
-    'TTGamma_SingleLept_Pt100'  :  0.132,
-    'TTGamma_Dilepton_Pt100'      :  0.03428,
+    'TTGamma_Hadronic_Pt100'    :  0.3209,
+    'TTGamma_SingleLept_Pt100'  :  0.2632,
+    'TTGamma_Dilepton_Pt100'    :  0.0554,
 
-    'TTGamma_Hadronic_Pt200'   :  0.02674,
-    'TTGamma_SingleLept_Pt200' :  0.02703,
-    'TTGamma_Dilepton_Pt200'     :  0.006812,
+    'TTGamma_Hadronic_Pt200'   :  0.068588,
+    'TTGamma_SingleLept_Pt200' :  0.053898,
+    'TTGamma_Dilepton_Pt200'   :  0.011008,
 
     'TTbar'             : 831.76,
 
