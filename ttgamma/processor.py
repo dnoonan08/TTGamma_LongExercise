@@ -66,6 +66,8 @@ def maxHistoryPDGID(idxList_contents, idxList_starts, idxList_stops, pdgID_conte
 class TTGammaProcessor(processor.ProcessorABC):
 #     def __init__(self, runNum = -1, eventNum = -1):
     def __init__(self, runNum = -1, eventNum = -1, mcEventYields = None):
+        self.mcEventYields = mcEventYields
+
         dataset_axis = hist.Cat("dataset", "Dataset")
         lep_axis = hist.Bin("lepFlavor", r"ElectronOrMuon", 2, -1, 1)
         lep_axis.identifiers()[0].label = 'Electron'
@@ -568,7 +570,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         
         evtWeight = np.ones_like(df['event'],dtype=np.float64)        
         if not 'Data' in dataset:
-            nMCevents = mcEventYields[datasetFull]
+            nMCevents = self.mcEventYields[datasetFull]
             xsec = crossSections[dataset]
 
             evtWeight *= xsec * lumis[year] / nMCevents
