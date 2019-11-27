@@ -69,9 +69,13 @@ class TTGammaProcessor(processor.ProcessorABC):
         self.mcEventYields = mcEventYields
 
         dataset_axis = hist.Cat("dataset", "Dataset")
-        lep_axis = hist.Bin("lepFlavor", r"ElectronOrMuon", 2, -1, 1)
-        lep_axis.identifiers()[0].label = 'Electron'
-        lep_axis.identifiers()[1].label = 'Muon'
+        lep_axis = hist.Cat("lepFlavor", "Lepton Flavor")
+
+        systematic_axis = hist.Cat("systematic", "Systematic Uncertainty")
+
+        # lep_axis = hist.Bin("lepFlavor", r"ElectronOrMuon", 2, -1, 1)
+        # lep_axis.identifiers()[0].label = 'Electron'
+        # lep_axis.identifiers()[1].label = 'Muon'
 
         m3_axis = hist.Bin("M3", r"$M_3$ [GeV]", 200, 0., 1000)
         mass_axis = hist.Bin("mass", r"$m_{\ell\gamma}$ [GeV]", 400, 0., 400)
@@ -89,14 +93,14 @@ class TTGammaProcessor(processor.ProcessorABC):
         ###
         self._accumulator = processor.dict_accumulator({
             ##photon histograms
-            'photon_pt': hist.Hist("Counts", dataset_axis, pt_axis, phoCategory_axis, lep_axis),
-            'photon_eta': hist.Hist("Counts", dataset_axis, eta_axis, phoCategory_axis, lep_axis),
-            'photon_chIso': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis),
-            'photon_chIsoSideband': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis),
-            'photon_lepton_mass': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis),
-            'photon_lepton_mass_3j0t': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis),
-            'M3'      : hist.Hist("Counts", dataset_axis, m3_axis, phoCategory_axis, lep_axis),
-            'M3Presel': hist.Hist("Counts", dataset_axis, m3_axis, lep_axis),
+            'photon_pt': hist.Hist("Counts", dataset_axis, pt_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_eta': hist.Hist("Counts", dataset_axis, eta_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_chIso': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_chIsoSideband': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_lepton_mass': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_lepton_mass_3j0t': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'M3'      : hist.Hist("Counts", dataset_axis, m3_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'M3Presel': hist.Hist("Counts", dataset_axis, m3_axis, lep_axis, systematic_axis),
             'EventCount':processor.value_accumulator(int)
         })
 
@@ -543,10 +547,9 @@ class TTGammaProcessor(processor.ProcessorABC):
                        oneEle & muVeto &
                        looseMuonSel & looseElectronSel)
 
-        lep_noLoose = mu_noLoose| ele_noLoose
+        # lep_noLoose = mu_noLoose| ele_noLoose
         
-        lep_jetSel = (lep_noLoose & 
-                      (tightJets.counts >= 4) & (bJets.counts >= 1)
+        lep_jetSel = ((tightJets.counts >= 4) & (bJets.counts >= 1)
                      )
         lep_zeropho = (lep_jetSel & 
                        (tightPhotons.counts == 0)
@@ -561,12 +564,11 @@ class TTGammaProcessor(processor.ProcessorABC):
                               (loosePhotonsSideband.counts == 1)
                              )
 
-        lep_phosel_3j0t = (lep_noLoose & 
-                           (tightJets.counts >= 3) & (bJets.counts ==0) &
+        lep_phosel_3j0t = ((tightJets.counts >= 3) & (bJets.counts ==0) &
                            (tightPhotons.counts == 1)
                           )
 
-        lepFlavor = -0.5*ele_noLoose + 0.5*mu_noLoose
+#        lepFlavor = -0.5*ele_noLoose + 0.5*mu_noLoose
         
         
 #        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
@@ -636,66 +638,93 @@ class TTGammaProcessor(processor.ProcessorABC):
 
 #            evtWeight *= muSF
         
-        evtWeight = weights.weight()
+        syst = 'nominal'
 
-        output['photon_pt'].fill(dataset=dataset,
-                                 pt=tightPhotons.p4.pt[:,:1][lep_phosel].flatten(),
-                                 category=phoCategory[lep_phosel].flatten(),
-                                 lepFlavor=lepFlavor[lep_phosel],
-                                 weight=evtWeight[lep_phosel].flatten())
+        for syst in ['nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown']:
+            
+            weightSyst = syst
+            if syst in ['nominal']:
+                weightSyst=None
 
-        output['photon_eta'].fill(dataset=dataset,
-                                  eta=tightPhotons.eta[:,:1][lep_phosel].flatten(),
-                                  category=phoCategory[lep_phosel].flatten(),
-                                  lepFlavor=lepFlavor[lep_phosel],
-                                  weight=evtWeight[lep_phosel].flatten())
+            evtWeight = weights.weight(weightSyst)
 
-        output['photon_chIsoSideband'].fill(dataset=dataset,
-                                            chIso=loosePhotonsSideband.chIso[:,:1][lep_phoselSideband].flatten(),
-                                            category=phoCategorySideband[lep_phoselSideband].flatten(),
-                                            lepFlavor=lepFlavor[lep_phoselSideband],
-                                            weight=evtWeight[lep_phoselSideband].flatten())
 
-        output['photon_chIso'].fill(dataset=dataset,
-                                    chIso=loosePhotons.chIso[:,:1][lep_phoselLoose].flatten(),
-                                    category=phoCategoryLoose[lep_phoselLoose].flatten(),
-                                    lepFlavor=lepFlavor[lep_phoselLoose],
-                                    weight=evtWeight[lep_phoselLoose].flatten())
+            for lepton in ['electron','muon']:
+                if lepton=='electron':
+                    lepSel = ele_noLoose
+                if lepton=='muon':
+                    lepSel = mu_noLoose
+    
+                output['photon_pt'].fill(dataset=dataset,
+                                         pt=tightPhotons.p4.pt[:,:1][lep_phosel & lepSel].flatten(),
+                                         category=phoCategory[lep_phosel & lepSel].flatten(),
+                                         lepFlavor=lepton,
+                                         systematic=syst,
+                                         weight=evtWeight[lep_phosel & lepSel].flatten())
+    
+                output['photon_eta'].fill(dataset=dataset,
+                                          eta=tightPhotons.eta[:,:1][lep_phosel & lepSel].flatten(),
+                                          category=phoCategory[lep_phosel & lepSel].flatten(),
+                                          lepFlavor=lepton,
+                                          systematic=syst,
+                                          weight=evtWeight[lep_phosel & lepSel].flatten())
+                
+                output['photon_chIsoSideband'].fill(dataset=dataset,
+                                                    chIso=loosePhotonsSideband.chIso[:,:1][lep_phoselSideband & lepSel].flatten(),
+                                                    category=phoCategorySideband[lep_phoselSideband & lepSel].flatten(),
+                                                    lepFlavor=lepton,
+                                                    systematic=syst,
+                                                    weight=evtWeight[lep_phoselSideband & lepSel].flatten())
+                
+                output['photon_chIso'].fill(dataset=dataset,
+                                            chIso=loosePhotons.chIso[:,:1][lep_phoselLoose & lepSel].flatten(),
+                                            category=phoCategoryLoose[lep_phoselLoose & lepSel].flatten(),
+                                            lepFlavor=lepton,
+                                            systematic=syst,
+                                            weight=evtWeight[lep_phoselLoose & lepSel].flatten())
+                
+                
+                output['M3'].fill(dataset=dataset,
+                                  M3=M3[lep_phosel & lepSel].flatten(),
+                                  category=phoCategoryLoose[lep_phosel & lepSel].flatten(),
+                                  lepFlavor=lepton,
+                                  systematic=syst,
+                                  weight=evtWeight[lep_phosel & lepSel].flatten())
+                
+                output['M3Presel'].fill(dataset=dataset,
+                                        M3=M3[lep_zeropho & lepSel].flatten(),
+                                        lepFlavor=lepton,
+                                        systematic=syst,
+                                        weight=evtWeight[lep_zeropho & lepSel].flatten())                            
+    
+            
+            output['photon_lepton_mass'].fill(dataset=dataset,
+                                              mass=egammaMass[lep_phosel & ele_noLoose].flatten(),
+                                              category=phoCategory[lep_phosel & ele_noLoose].flatten(),
+                                              lepFlavor='electron',
+                                              systematic=syst,
+                                              weight=evtWeight[lep_phosel & ele_noLoose].flatten())
+            output['photon_lepton_mass'].fill(dataset=dataset,
+                                              mass=mugammaMass[lep_phosel & mu_noLoose].flatten(),
+                                              category=phoCategory[lep_phosel & mu_noLoose].flatten(),
+                                              lepFlavor='muon',
+                                              systematic=syst,
+                                              weight=evtWeight[lep_phosel & mu_noLoose].flatten())
+    
+            output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
+                                                   mass=egammaMass[lep_phosel_3j0t & ele_noLoose].flatten(),
+                                                   category=phoCategory[lep_phosel_3j0t & ele_noLoose].flatten(),
+                                                   lepFlavor='electron',
+                                                   systematic=syst,
+                                                   weight=evtWeight[lep_phosel_3j0t & ele_noLoose].flatten())
+            output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
+                                                   mass=mugammaMass[lep_phosel_3j0t & mu_noLoose].flatten(),
+                                                   category=phoCategory[lep_phosel_3j0t & mu_noLoose].flatten(),
+                                                   lepFlavor='muon',
+                                                   systematic=syst,
+                                                   weight=evtWeight[lep_phosel_3j0t & mu_noLoose].flatten())
+            
 
-        output['photon_lepton_mass'].fill(dataset=dataset,
-                                          mass=egammaMass[lep_phosel & ele_noLoose].flatten(),
-                                          category=phoCategory[lep_phosel & ele_noLoose].flatten(),
-                                          lepFlavor=lepFlavor[lep_phosel & ele_noLoose],
-                                          weight=evtWeight[lep_phosel & ele_noLoose].flatten())
-        output['photon_lepton_mass'].fill(dataset=dataset,
-                                          mass=mugammaMass[lep_phosel & mu_noLoose].flatten(),
-                                          category=phoCategory[lep_phosel & mu_noLoose].flatten(),
-                                          lepFlavor=lepFlavor[lep_phosel & mu_noLoose],
-                                          weight=evtWeight[lep_phosel & mu_noLoose].flatten())
-
-        output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
-                                               mass=egammaMass[lep_phosel_3j0t & ele_noLoose].flatten(),
-                                               category=phoCategory[lep_phosel_3j0t & ele_noLoose].flatten(),
-                                               lepFlavor=lepFlavor[lep_phosel_3j0t & ele_noLoose],
-                                               weight=evtWeight[lep_phosel_3j0t & ele_noLoose].flatten())
-        output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
-                                               mass=mugammaMass[lep_phosel_3j0t & mu_noLoose].flatten(),
-                                               category=phoCategory[lep_phosel_3j0t & mu_noLoose].flatten(),
-                                               lepFlavor=lepFlavor[lep_phosel_3j0t & mu_noLoose],
-                                               weight=evtWeight[lep_phosel_3j0t & mu_noLoose].flatten())
-        
-        
-        output['M3'].fill(dataset=dataset,
-                          M3=M3[lep_phosel].flatten(),
-                          category=phoCategoryLoose[lep_phosel].flatten(),
-                          lepFlavor=lepFlavor[lep_phosel],
-                          weight=evtWeight[lep_phosel].flatten())
-
-        output['M3Presel'].fill(dataset=dataset,
-                          M3=M3[lep_zeropho].flatten(),
-                          lepFlavor=lepFlavor[lep_zeropho],
-                          weight=evtWeight[lep_zeropho].flatten())                            
-        
         output['EventCount'] = len(df['event'])
 
         return output
