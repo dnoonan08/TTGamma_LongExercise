@@ -171,6 +171,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         eleTrigger = df['HLT_Ele27_WPTight_Gsf']
         photonBitMapName = 'Photon_cutBased'
 
+        weights = processor.Weights(len(df['event']))
   
         #### These are already applied in the skim
 #         filters = (df['Flag_goodVertices'] &
@@ -568,12 +569,16 @@ class TTGammaProcessor(processor.ProcessorABC):
         lepFlavor = -0.5*ele_noLoose + 0.5*mu_noLoose
         
         
-        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
+#        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
         if not 'Data' in dataset:
+            lumiWeight = np.ones_like(df['event'],dtype=np.float64)
             nMCevents = self.mcEventYields[datasetFull]
             xsec = crossSections[dataset]
+            lumiWeight *= xsec * lumis[year] / nMCevents
 
-            evtWeight *= xsec * lumis[year] / nMCevents
+#            evtWeight *= xsec * lumis[year] / nMCevents
+
+            weights.add('lumiWeight',lumiWeight)
 
             #btag key name
             #name / working Point / type / systematic / jetType
@@ -599,7 +604,9 @@ class TTGammaProcessor(processor.ProcessorABC):
             btagWeight = pData/pMC
             btagWeight[pData==0]=0
 
-            evtWeight *= btagWeight
+#            evtWeight *= btagWeight
+
+            weights.add('btagWeight',btagWeight)
 
             eleID = self.ele_id_sf(tightElectron.eta, tightElectron.pt)
             eleIDerr = self.ele_id_err(tightElectron.eta, tightElectron.pt)
@@ -607,10 +614,12 @@ class TTGammaProcessor(processor.ProcessorABC):
             eleRECOerr = self.ele_reco_err(tightElectron.eta, tightElectron.pt)
             
             eleSF = (eleID*eleRECO).prod()
-            eleSFup = ((eleID + eleIDerr) * (eleRECO + eleRECOerr)).prod()
-            eleSFdo = ((eleID - eleIDerr) * (eleRECO - eleRECOerr)).prod()
+            eleSF_up = ((eleID + eleIDerr) * (eleRECO + eleRECOerr)).prod()
+            eleSF_down = ((eleID - eleIDerr) * (eleRECO - eleRECOerr)).prod()
 
-            evtWeight *= eleSF
+            weights.add('eleEffWeight',weight=eleSF,weightUp=eleSF_up,weightDown=eleSF_down)
+
+#            evtWeight *= eleSF
 
             muID = self.mu_id_sf(tightMuon.eta, tightMuon.pt)
             muIDerr = self.mu_id_err(tightMuon.eta, tightMuon.pt)
@@ -623,8 +632,12 @@ class TTGammaProcessor(processor.ProcessorABC):
             muSF_up = ((muID + muIDerr) * (muIso + muIsoerr) * (muTrig + muTrigerr)).prod()
             muSF_down = ((muID - muIDerr) * (muIso - muIsoerr) * (muTrig - muTrigerr)).prod()
 
-            evtWeight *= muSF
+            weights.add('muEffWeight',weight=muSF,weightUp=muSF_up, weightDown=muSF_down)
+
+#            evtWeight *= muSF
         
+        evtWeight = weights.weight()
+
         output['photon_pt'].fill(dataset=dataset,
                                  pt=tightPhotons.p4.pt[:,:1][lep_phosel].flatten(),
                                  category=phoCategory[lep_phosel].flatten(),
