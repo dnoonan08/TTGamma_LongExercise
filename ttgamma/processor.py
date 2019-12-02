@@ -245,6 +245,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             genFlav=df['Photon_genPartFlav'] if not isData else np.ones_like(df['Photon_electronVeto']),
             genIdx=df['Photon_genPartIdx'] if not isData else np.ones_like(df['Photon_electronVeto']),
         )
+
         if not isData:
             genPart = JaggedCandidateArray.candidatesfromcounts(
                 df['nGenPart'],
@@ -261,6 +262,38 @@ class TTGammaProcessor(processor.ProcessorABC):
             genmotherIdx = genPart.motherIdx
             genpdgid = genPart.pdgid
 
+            generatorWeight = df['Generator_weight']
+            LHEWeight_originalXWGTUP = df['LHEWeight_originalXWGTUP']
+            generatorWeight.shape = (generatorWeight.size,1)
+            LHEWeight_originalXWGTUP.shape = (LHEWeight_originalXWGTUP.size,1)
+
+            nPSWeights = df['nPSWeight']
+            PSWeights = df['PSWeight']
+            PSWeights.shape = (nPSWeights.size,int(nPSWeights.mean()))
+
+            nLHEScaleWeights = df['nLHEScaleWeight']
+            LHEScaleWeights = df['LHEScaleWeight']
+            LHEScaleWeights.shape = (nLHEScaleWeights.size,int(nLHEScaleWeights.mean()))
+
+            nLHEPdfWeights = df['nLHEPdfWeight']
+            LHEPdfWeights = df['LHEPdfWeight']
+            LHEPdfWeights.shape = (nLHEPdfWeights.size,int(nLHEPdfWeights.mean()))
+            
+            LHEPdfVariation = LHEPdfWeights / LHEPdfWeights[:,:1]
+
+            if nLHEScaleWeights.mean()==9:
+                scaleWeightSelector=[0,1,3,5,7,8]
+            elif nLHEScaleWeights.mean()==44:
+                scaleWeightSelector=[0,5,15,24,34,39]
+            else:
+                scaleWeightSelector=[]
+
+            LHEScaleVariation = LHEScaleWeights[:,scaleWeightSelector]
+
+            if not (generatorWeight==LHEWeight_originalXWGTUP).all():
+                PSWeights = PSWeights * LHEWeight_originalXWGTUP / generatorWeight
+
+            
         ## TTbar vs TTGamma Overlap Removal (work in progress, still buggy)
         doOverlapRemoval = False
         if 'TTbar' in dataset:
@@ -681,9 +714,17 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             weights.add('muEffWeight',weight=muSF,weightUp=muSF_up, weightDown=muSF_down)
 
+            weights.add('ISR',weight=np.ones_like(PSWeights[:,0]), weightUp=PSWeights[:,2], weightDown=PSWeights[:,0])
+
+            weights.add('FSR',weight=np.ones_like(PSWeights[:,0]), weightUp=PSWeights[:,3], weightDown=PSWeights[:,1])
+
+            weights.add('PDF', weight=np.ones_like(LHEPdfVariation[:,0]), weightUp=LHEPdfVariation.max(axis=1), weightDown=LHEPdfVariation.min(axis=1))
+
+            weights.add('Q2Scale', weight=np.ones_like(LHEScaleVariation[:,0]), weightUp=LHEScaleVariation.max(axis=1), weightDown=LHEScaleVariation.min(axis=1))
+
 #            evtWeight *= muSF
         
-        systList = ['noweight','nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown']
+        systList = ['noweight','nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
 
         if isData:
             systList = ['noweight']
