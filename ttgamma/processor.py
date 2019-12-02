@@ -261,37 +261,44 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             genmotherIdx = genPart.motherIdx
             genpdgid = genPart.pdgid
+            hasWeights=True
 
-            generatorWeight = df['Generator_weight']
-            LHEWeight_originalXWGTUP = df['LHEWeight_originalXWGTUP']
-            generatorWeight.shape = (generatorWeight.size,1)
-            LHEWeight_originalXWGTUP.shape = (LHEWeight_originalXWGTUP.size,1)
+            try:
+                generatorWeight = df['Generator_weight']
+                generatorWeight.shape = (generatorWeight.size,1)
 
-            nPSWeights = df['nPSWeight']
-            PSWeights = df['PSWeight']
-            PSWeights.shape = (nPSWeights.size,int(nPSWeights.mean()))
+                LHEWeight_originalXWGTUP = df['LHEWeight_originalXWGTUP']
+                LHEWeight_originalXWGTUP.shape = (LHEWeight_originalXWGTUP.size,1)
 
-            nLHEScaleWeights = df['nLHEScaleWeight']
-            LHEScaleWeights = df['LHEScaleWeight']
-            LHEScaleWeights.shape = (nLHEScaleWeights.size,int(nLHEScaleWeights.mean()))
+                nPSWeights = df['nPSWeight']
+                PSWeights = df['PSWeight']
+                PSWeights.shape = (nPSWeights.size,int(nPSWeights.mean()))
+                if nPSWeights.mean()==1:
+                    hasWeights=False
+                
+                nLHEScaleWeights = df['nLHEScaleWeight']
+                LHEScaleWeights = df['LHEScaleWeight']
+                LHEScaleWeights.shape = (nLHEScaleWeights.size,int(nLHEScaleWeights.mean()))
+                
+                nLHEPdfWeights = df['nLHEPdfWeight']
+                LHEPdfWeights = df['LHEPdfWeight']
+                LHEPdfWeights.shape = (nLHEPdfWeights.size,int(nLHEPdfWeights.mean()))
+                
+                LHEPdfVariation = LHEPdfWeights / LHEPdfWeights[:,:1]
 
-            nLHEPdfWeights = df['nLHEPdfWeight']
-            LHEPdfWeights = df['LHEPdfWeight']
-            LHEPdfWeights.shape = (nLHEPdfWeights.size,int(nLHEPdfWeights.mean()))
-            
-            LHEPdfVariation = LHEPdfWeights / LHEPdfWeights[:,:1]
+                if nLHEScaleWeights.mean()==9:
+                    scaleWeightSelector=[0,1,3,5,7,8]
+                elif nLHEScaleWeights.mean()==44:
+                    scaleWeightSelector=[0,5,15,24,34,39]
+                else:
+                    scaleWeightSelector=[]
 
-            if nLHEScaleWeights.mean()==9:
-                scaleWeightSelector=[0,1,3,5,7,8]
-            elif nLHEScaleWeights.mean()==44:
-                scaleWeightSelector=[0,5,15,24,34,39]
-            else:
-                scaleWeightSelector=[]
+                LHEScaleVariation = LHEScaleWeights[:,scaleWeightSelector]
 
-            LHEScaleVariation = LHEScaleWeights[:,scaleWeightSelector]
-
-            if not (generatorWeight==LHEWeight_originalXWGTUP).all():
-                PSWeights = PSWeights * LHEWeight_originalXWGTUP / generatorWeight
+                if not (generatorWeight==LHEWeight_originalXWGTUP).all():
+                    PSWeights = PSWeights * LHEWeight_originalXWGTUP / generatorWeight
+            except:
+                hasWeights=False
 
             
         ## TTbar vs TTGamma Overlap Removal (work in progress, still buggy)
@@ -557,9 +564,9 @@ class TTGammaProcessor(processor.ProcessorABC):
             #define integer definition for the photon category axis
             phoCategorySideband = 1*isGenPhoSideband + 2*isMisIDeleSideband + 3*isHadPhoSideband + 4*isHadFakeSideband            
         else:
-            phoCategory = np.ones_like(df['event'])
-            phoCategoryLoose = np.ones_like(df['event'])
-            phoCategorySideband = np.ones_like(df['event'])
+            phoCategory = np.ones(df.size)
+            phoCategoryLoose = np.ones(df.size)
+            phoCategorySideband = np.ones(df.size)
         
 
         ### remove filter selection
@@ -604,7 +611,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         
 #        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
         if not 'Data' in dataset:
-            lumiWeight = np.ones_like(df['event'],dtype=np.float64)
+            lumiWeight = np.ones(df.size)
             nMCevents = self.mcEventYields[datasetFull]
             xsec = crossSections[dataset]
             lumiWeight *= xsec * lumis[year] / nMCevents
@@ -714,17 +721,24 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             weights.add('muEffWeight',weight=muSF,weightUp=muSF_up, weightDown=muSF_down)
 
-            weights.add('ISR',weight=np.ones_like(PSWeights[:,0]), weightUp=PSWeights[:,2], weightDown=PSWeights[:,0])
+            if hasWeights:
+                weights.add('ISR',weight=np.ones(df.size), weightUp=PSWeights[:,2], weightDown=PSWeights[:,0])
+                
+                weights.add('FSR',weight=np.ones(df.size), weightUp=PSWeights[:,3], weightDown=PSWeights[:,1])
 
-            weights.add('FSR',weight=np.ones_like(PSWeights[:,0]), weightUp=PSWeights[:,3], weightDown=PSWeights[:,1])
+                weights.add('PDF', weight=np.ones(df.size), weightUp=LHEPdfVariation.max(axis=1), weightDown=LHEPdfVariation.min(axis=1))
 
-            weights.add('PDF', weight=np.ones_like(LHEPdfVariation[:,0]), weightUp=LHEPdfVariation.max(axis=1), weightDown=LHEPdfVariation.min(axis=1))
-
-            weights.add('Q2Scale', weight=np.ones_like(LHEScaleVariation[:,0]), weightUp=LHEScaleVariation.max(axis=1), weightDown=LHEScaleVariation.min(axis=1))
+                weights.add('Q2Scale', weight=np.ones(df.size), weightUp=LHEScaleVariation.max(axis=1), weightDown=LHEScaleVariation.min(axis=1))
+            else:
+                weights.add('ISR',    weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
+                weights.add('FSR',    weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
+                weights.add('PDF',    weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
+                weights.add('Q2Scale',weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
 
 #            evtWeight *= muSF
         
         systList = ['noweight','nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+
 
         if isData:
             systList = ['noweight']
@@ -736,7 +750,7 @@ class TTGammaProcessor(processor.ProcessorABC):
                 weightSyst=None
 
             if syst=='noweight':
-                evtWeight = np.ones_like(df['event'])
+                evtWeight = np.ones(df.size)
             else:
                 evtWeight = weights.weight(weightSyst)
 
