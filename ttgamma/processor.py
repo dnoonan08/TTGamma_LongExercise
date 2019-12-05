@@ -26,6 +26,10 @@ cwd = os.path.dirname(__file__)
 with open(f'{cwd}/utils/taggingEfficienciesDenseLookup.pkl', 'rb') as _file:
     taggingEffLookup = pickle.load(_file)
 
+puLookup = util.load(f'{cwd}/ScaleFactors/puLookup.coffea')
+puLookup_Down = util.load(f'{cwd}/ScaleFactors/puLookup_Down.coffea')
+puLookup_Up = util.load(f'{cwd}/ScaleFactors/puLookup_Up.coffea')
+
 
 muSFFileList = [{'id'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunBCDEF_SF_ID.root", "NUM_TightID_DEN_genTracks_eta_pt"),
                  'iso'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunBCDEF_SF_ISO.root", "NUM_TightRelIso_DEN_TightIDandIPCut_eta_pt"),
@@ -283,7 +287,11 @@ class TTGammaProcessor(processor.ProcessorABC):
                 nLHEPdfWeights = df['nLHEPdfWeight']
                 LHEPdfWeights = df['LHEPdfWeight']
                 LHEPdfWeights.shape = (nLHEPdfWeights.size,int(nLHEPdfWeights.mean()))
-                
+
+
+                #avoid errors from 0/0 division
+                if (LHEPdfWeights[:,:1]==0).any():
+                    LHEPdfWeights[:,0][LHEPdfWeights[:,0]==0] = 1.
                 LHEPdfVariation = LHEPdfWeights / LHEPdfWeights[:,:1]
 
                 if nLHEScaleWeights.mean()==9:
@@ -620,6 +628,13 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             weights.add('lumiWeight',lumiWeight)
 
+            nPUTrue = df['Pileup_nTrueInt']
+            puWeight = puLookup(datasetFull, nPUTrue)
+            puWeight_Up = puLookup_Up(datasetFull, nPUTrue)
+            puWeight_Down = puLookup_Down(datasetFull, nPUTrue)
+            
+            weights.add('puWeight',weight=puWeight, weightUp=puWeight_Up, weightDown=puWeight_Down)
+
             #btag key name
             #name / working Point / type / systematic / jetType
             #  ... / 0-loose 1-medium 2-tight / comb,mujets,iterativefit / central,up,down / 0-b 1-c 2-udcsg 
@@ -737,7 +752,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
 #            evtWeight *= muSF
         
-        systList = ['noweight','nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
 
 
         if isData:
