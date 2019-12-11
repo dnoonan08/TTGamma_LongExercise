@@ -3,6 +3,7 @@ import time
 from coffea import hist, util
 from coffea.analysis_objects import JaggedCandidateArray
 import coffea.processor as processor
+from coffea.jetmet_tools import FactorizedJetCorrector, JetCorrectionUncertainty, JetTransformer, JetResolution, JetResolutionScaleFactor
 from functools import partial
 import uproot
 
@@ -18,6 +19,10 @@ from .utils.plotting import plotWithRatio
 from .utils.crossSections import *
 from .utils.efficiencies import getMuSF, getEleSF
 
+from packaging import version
+import coffea
+if (version.parse(coffea.__version__) < version.parse('0.6.22') ):
+    raise Exception('Code requires coffea version 0.6.22 or newer')
 
 import os.path
 cwd = os.path.dirname(__file__)
@@ -40,6 +45,32 @@ muSFFileList = [{'id'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/Effi
                  'trig'  : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_trigger_EfficienciesAndSF_RunGtoH.root", "IsoMu24_OR_IsoTkMu24_PtEtaBins/abseta_pt_ratio"),
                  'scale' : 16.226452636/35.882515396}]
 
+Jetext = extractor()
+Jetext.add_weight_sets([
+        f"* * {cwd}/ScaleFactors/JEC/Summer16_07Aug2017_V11_MC_L1FastJet_AK4PFchs.jec.txt",
+        f"* * {cwd}/ScaleFactors/JEC/Summer16_07Aug2017_V11_MC_L2Relative_AK4PFchs.jec.txt",
+        f"* * {cwd}/ScaleFactors/JEC/Summer16_07Aug2017_V11_MC_Uncertainty_AK4PFchs.junc.txt",
+        f"* * {cwd}/ScaleFactors/JEC/Summer16_25nsV1_MC_PtResolution_AK4PFchs.jr.txt",
+        f"* * {cwd}/ScaleFactors/JEC/Summer16_25nsV1_MC_SF_AK4PFchs.jersf.txt",
+        ])
+Jetext.finalize()
+Jetevaluator = Jetext.make_evaluator()
+
+jec_names = ['Summer16_07Aug2017_V11_MC_L1FastJet_AK4PFchs','Summer16_07Aug2017_V11_MC_L2Relative_AK4PFchs']
+junc_names = ['Summer16_07Aug2017_V11_MC_Uncertainty_AK4PFchs']
+
+jer_names = ['Summer16_25nsV1_MC_PtResolution_AK4PFchs']
+jersf_names = ['Summer16_25nsV1_MC_SF_AK4PFchs']
+
+
+JECcorrector = FactorizedJetCorrector(**{name: Jetevaluator[name] for name in jec_names})
+
+JECuncertainties = JetCorrectionUncertainty(**{name:Jetevaluator[name] for name in junc_names})
+
+JER = JetResolution(**{name:Jetevaluator[name] for name in jer_names})
+JERsf = JetResolutionScaleFactor(**{name:Jetevaluator[name] for name in jersf_names})
+
+Jet_transformer = JetTransformer(jec=JECcorrector,junc=JECuncertainties, jer = JER, jersf = JERsf)
 
 
 @numba.jit(nopython=True)
@@ -193,6 +224,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 #                       )
         
         
+        rho = df['fixedGridRhoFastjetAll']
         
         muons = JaggedCandidateArray.candidatesfromcounts(
             df['nMuon'],
@@ -220,6 +252,15 @@ class TTGammaProcessor(processor.ProcessorABC):
             dz=df['Electron_dz'],
         )
 
+        if not isData:
+            genJet = JaggedCandidateArray.candidatesfromcounts(
+                df['nGenJet'],
+                pt = df['GenJet_pt'],
+                eta = df['GenJet_eta'],
+                phi = df['GenJet_phi'],
+                mass = df['GenJet_mass'],
+            )
+
         jets = JaggedCandidateArray.candidatesfromcounts(
             df['nJet'],
             pt=df['Jet_pt'],
@@ -228,10 +269,26 @@ class TTGammaProcessor(processor.ProcessorABC):
             mass=df['Jet_mass'],
             jetId=df['Jet_jetId'],
             btag=df['Jet_btagDeepB'],
+            area=df['Jet_area'],
+            ptRaw=df['Jet_pt'] * (1-df['Jet_rawFactor']),
+            massRaw=df['Jet_mass'] * (1-df['Jet_rawFactor']),
             hadFlav=df['Jet_hadronFlavour'] if not isData else np.ones_like(df['Jet_jetId']),
-            genIdx=df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
+            genJetIdx=df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
+            ptGenJet=np.zeros_like(df['Jet_pt']), #df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
         )
 
+        if not isData:
+            # fix what seems to be a bug, genJets get skimmed after the genJet matching:
+            #   jets matched to a genJet with pt<10 still get assigned a value for Jet_genJetIdx, but that index is not present in the
+            #   genJet list because it is cut.  In these cases, set idx to -1
+            jets.genJetIdx[jets.genJetIdx>=genJet.counts] = -1
+
+            jets['ptGenJet'][jets.genJetIdx>-1] = genJet[jets.genJetIdx[jets.genJetIdx>-1]].pt
+            
+            jets['rho'] = jets.pt.ones_like()*rho
+
+            Jet_transformer.transform(jets, forceStochastic=False)
+            
         photons = JaggedCandidateArray.candidatesfromcounts(
             df['nPhoton'],
             pt=df['Photon_pt'],
@@ -473,26 +530,60 @@ class TTGammaProcessor(processor.ProcessorABC):
         jetPho = jets['p4'].cross(tightPhotons['p4'],nested=True)
         dRjetpho = ((jetPho.i0.delta_r(jetPho.i1)).min()>0.1) | (tightPhotons.counts==0)
         
-        jetSelect = ((jets.pt > 30) &
-                     (abs(jets.eta) < 2.4) &
-                     ((jets.jetId >> jetIDbit & 1)==1) &
-                     dRjetmu & dRjetele & dRjetpho                    
-                    )
+        jetSelectNoPt = ((abs(jets.eta) < 2.4) &
+                         ((jets.jetId >> jetIDbit & 1)==1) &
+                         dRjetmu & dRjetele & dRjetpho )
+        
+        jetSelect = jetSelectNoPt & (jets.pt > 30)
+
+        jetSelect_JESUp = jetSelectNoPt & (jets.pt_jes_up > 30)
+        jetSelect_JESDown = jetSelectNoPt & (jets.pt_jes_down > 30)
+
+        jetSelect_JERUp = jetSelectNoPt & (jets.pt_jer_up > 30)
+        jetSelect_JERDown = jetSelectNoPt & (jets.pt_jer_down > 30)
 
         tightJets = jets[jetSelect]
+        tightJets_JERUp = jets[jetSelect_JERUp]
+        tightJets_JERDown = jets[jetSelect_JERDown]
+        tightJets_JESUp = jets[jetSelect_JESUp]
+        tightJets_JESDown = jets[jetSelect_JESDown]
         
         bTagWP = 0.6321   #2016 DeepCSV working point
 
         btagged = tightJets.btag>bTagWP
 
-        bJets = tightJets[btagged]
+        # bJets = tightJets[btagged]
+
+        # # print (tightJets.btag>bTagWP)
+        # # print ((tightJets.btag>bTagWP).sum())
+        # print (((tightJets.btag>bTagWP).sum()==bJets.counts).all())
+
 
         ## Define M3, mass of 3-jet pair with highest pT
         triJet = tightJets['p4'].choose(3)
-
         triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
         triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
         M3 = triJetMass[triJetPt.argmax()]
+
+        triJet = tightJets_JESUp['p4'].choose(3)
+        triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
+        triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
+        M3_JESUp = triJetMass[triJetPt.argmax()]
+
+        triJet = tightJets_JESDown['p4'].choose(3)
+        triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
+        triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
+        M3_JESDown = triJetMass[triJetPt.argmax()]
+
+        triJet = tightJets_JERUp['p4'].choose(3)
+        triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
+        triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
+        M3_JERUp = triJetMass[triJetPt.argmax()]
+
+        triJet = tightJets_JERDown['p4'].choose(3)
+        triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
+        triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
+        M3_JERDown = triJetMass[triJetPt.argmax()]
 
 
         leadingMuon = tightMuon[::1] 
@@ -577,15 +668,6 @@ class TTGammaProcessor(processor.ProcessorABC):
             phoCategorySideband = np.ones(df.size)
         
 
-        ### remove filter selection
-        ###    This is already applied in the skim, and is causing data to fail for some reason (the flag branches are duplicated in NanoAOD for data, is it causing problems???)
-#         mu_noLoose = (muTrigger & filters & passOverlapRemoval &
-#                       oneMuon & eleVeto &
-#                       looseMuonSel & looseElectronSel)
-#         ele_noLoose = (eleTrigger & filters & passOverlapRemoval &
-#                        oneEle & muVeto &
-#                        looseMuonSel & looseElectronSel)
-
         mu_noLoose = (muTrigger & passOverlapRemoval &
                       oneMuon & eleVeto &
                       looseMuonSel & looseElectronSel)
@@ -595,27 +677,33 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # lep_noLoose = mu_noLoose| ele_noLoose
         
-        lep_jetSel = ((tightJets.counts >= 4) & (bJets.counts >= 1)
-                     )
-        lep_zeropho = (lep_jetSel & 
-                       (tightPhotons.counts == 0)
-                      )
-        lep_phosel = (lep_jetSel & 
-                      (tightPhotons.counts == 1)
-                     )
-        lep_phoselLoose = (lep_jetSel & 
-                           (loosePhotons.counts == 1)
-                          )
-        lep_phoselSideband = (lep_jetSel & 
-                              (loosePhotonsSideband.counts == 1)
-                             )
+        lep_jetSel = ((tightJets.counts >= 4) & ((tightJets.btag>bTagWP).sum() >= 1))
+        lep_jetSel_3j0t = ((tightJets.counts >= 3) & ((tightJets.btag>bTagWP).sum() == 0))
 
-        lep_phosel_3j0t = ((tightJets.counts >= 3) & (bJets.counts ==0) &
-                           (tightPhotons.counts == 1)
-                          )
+        selection = processor.PackedSelection()
+        selection.add('eleSel',ele_noLoose)
+        selection.add('muSel',mu_noLoose)
 
-#        lepFlavor = -0.5*ele_noLoose + 0.5*mu_noLoose
-        
+        selection.add('jetSel', (tightJets.counts >= 4) & ((tightJets.btag>bTagWP).sum() >= 1) )
+        selection.add('jetSel_3j0t', (tightJets.counts >= 3) & ((tightJets.btag>bTagWP).sum() == 0) )
+
+        selection.add('jetSel_JERUp', (tightJets_JERUp.counts >= 4) & ((tightJets_JERUp.btag>bTagWP).sum() >= 1) )
+        selection.add('jetSel_JERUp_3j0t', (tightJets_JERUp.counts >= 3) & ((tightJets_JERUp.btag>bTagWP).sum() == 0) )
+
+        selection.add('jetSel_JERDown', (tightJets_JERDown.counts >= 4) & ((tightJets_JERDown.btag>bTagWP).sum() >= 1) )
+        selection.add('jetSel_JERDown_3j0t', (tightJets_JERDown.counts >= 3) & ((tightJets_JERDown.btag>bTagWP).sum() == 0) )
+
+        selection.add('jetSel_JESUp', (tightJets_JESUp.counts >= 4) & ((tightJets_JESUp.btag>bTagWP).sum() >= 1) )
+        selection.add('jetSel_JESUp_3j0t', (tightJets_JESUp.counts >= 3) & ((tightJets_JESUp.btag>bTagWP).sum() == 0) )
+
+        selection.add('jetSel_JESDown', (tightJets_JESDown.counts >= 4) & ((tightJets_JESDown.btag>bTagWP).sum() >= 1) )
+        selection.add('jetSel_JESDown_3j0t', (tightJets_JESDown.counts >= 3) & ((tightJets_JESDown.btag>bTagWP).sum() == 0) )
+
+        selection.add('zeroPho', tightPhotons.counts == 0)
+        selection.add('onePho', tightPhotons.counts == 1)
+        selection.add('loosePho', loosePhotons.counts == 1)
+        selection.add('loosePhoSideband', loosePhotonsSideband.counts == 1)
+
         
 #        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
         if not 'Data' in dataset:
@@ -752,7 +840,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
 #            evtWeight *= muSF
         
-        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown', 'JERUp', 'JERDown', 'JESUp', 'JESDown']
 
 
         if isData:
@@ -761,88 +849,105 @@ class TTGammaProcessor(processor.ProcessorABC):
         for syst in systList:
             
             weightSyst = syst
-            if syst in ['nominal']:
+            if syst in ['nominal','JERUp','JERDown','JESUp','JESDown']:
                 weightSyst=None
-
+                
             if syst=='noweight':
                 evtWeight = np.ones(df.size)
             else:
                 evtWeight = weights.weight(weightSyst)
 
+            jetSelType = 'jetSel'
+            M3var = M3
+            if syst in ['JERUp','JERDown','JESUp','JESDown']:
+                jetSelType = f'jetSel_{syst}'
+                M3var = eval(f'M3_{syst}')
+
             for lepton in ['electron','muon']:
                 if lepton=='electron':
-                    lepSel = ele_noLoose
+                    lepSel='eleSel'
                 if lepton=='muon':
-                    lepSel = mu_noLoose
-    
+                    lepSel='muSel'
+
+                phosel = selection.all(*(lepSel, jetSelType, 'onePho'))
+                phoselLoose = selection.all(*(lepSel, jetSelType, 'loosePho') )
+                phoselSideband = selection.all(*(lepSel, jetSelType, 'loosePhoSideband') )
+                zeroPho = selection.all(*(lepSel, jetSelType, 'zeroPho') )
+
                 output['photon_pt'].fill(dataset=dataset,
-                                         pt=tightPhotons.p4.pt[:,:1][lep_phosel & lepSel].flatten(),
-                                         category=phoCategory[lep_phosel & lepSel].flatten(),
+                                         pt=tightPhotons.p4.pt[:,:1][phosel].flatten(),
+                                         category=phoCategory[phosel].flatten(),
                                          lepFlavor=lepton,
                                          systematic=syst,
-                                         weight=evtWeight[lep_phosel & lepSel].flatten())
+                                         weight=evtWeight[phosel].flatten())
     
                 output['photon_eta'].fill(dataset=dataset,
-                                          eta=tightPhotons.eta[:,:1][lep_phosel & lepSel].flatten(),
-                                          category=phoCategory[lep_phosel & lepSel].flatten(),
+                                          eta=tightPhotons.eta[:,:1][phosel].flatten(),
+                                          category=phoCategory[phosel].flatten(),
                                           lepFlavor=lepton,
                                           systematic=syst,
-                                          weight=evtWeight[lep_phosel & lepSel].flatten())
+                                          weight=evtWeight[phosel].flatten())
                 
                 output['photon_chIsoSideband'].fill(dataset=dataset,
-                                                    chIso=loosePhotonsSideband.chIso[:,:1][lep_phoselSideband & lepSel].flatten(),
-                                                    category=phoCategorySideband[lep_phoselSideband & lepSel].flatten(),
+                                                    chIso=loosePhotonsSideband.chIso[:,:1][phoselSideband].flatten(),
+                                                    category=phoCategorySideband[phoselSideband].flatten(),
                                                     lepFlavor=lepton,
                                                     systematic=syst,
-                                                    weight=evtWeight[lep_phoselSideband & lepSel].flatten())
+                                                    weight=evtWeight[phoselSideband].flatten())
                 
                 output['photon_chIso'].fill(dataset=dataset,
-                                            chIso=loosePhotons.chIso[:,:1][lep_phoselLoose & lepSel].flatten(),
-                                            category=phoCategoryLoose[lep_phoselLoose & lepSel].flatten(),
+                                            chIso=loosePhotons.chIso[:,:1][phoselLoose].flatten(),
+                                            category=phoCategoryLoose[phoselLoose].flatten(),
                                             lepFlavor=lepton,
                                             systematic=syst,
-                                            weight=evtWeight[lep_phoselLoose & lepSel].flatten())
+                                            weight=evtWeight[phoselLoose].flatten())
                 
                 
                 output['M3'].fill(dataset=dataset,
-                                  M3=M3[lep_phosel & lepSel].flatten(),
-                                  category=phoCategoryLoose[lep_phosel & lepSel].flatten(),
+                                  M3=M3var[phosel].flatten(),
+                                  category=phoCategoryLoose[phosel].flatten(),
                                   lepFlavor=lepton,
                                   systematic=syst,
-                                  weight=evtWeight[lep_phosel & lepSel].flatten())
+                                  weight=evtWeight[phosel].flatten())
                 
                 output['M3Presel'].fill(dataset=dataset,
-                                        M3=M3[lep_zeropho & lepSel].flatten(),
+                                        M3=M3var[zeroPho].flatten(),
                                         lepFlavor=lepton,
                                         systematic=syst,
-                                        weight=evtWeight[lep_zeropho & lepSel].flatten())                            
+                                        weight=evtWeight[zeroPho].flatten())                            
     
             
+            phosel_e = selection.all(*('eleSel', jetSelType, 'onePho') )
+            phosel_mu = selection.all(*('muSel', jetSelType, 'onePho') )
+
+            phosel_3j0t_e = selection.all(*('eleSel', f'{jetSelType}_3j0t', 'onePho') )
+            phosel_3j0t_mu = selection.all(*('muSel', f'{jetSelType}_3j0t', 'onePho') )
+
             output['photon_lepton_mass'].fill(dataset=dataset,
-                                              mass=egammaMass[lep_phosel & ele_noLoose].flatten(),
-                                              category=phoCategory[lep_phosel & ele_noLoose].flatten(),
+                                              mass=egammaMass[phosel_e].flatten(),
+                                              category=phoCategory[phosel_e].flatten(),
                                               lepFlavor='electron',
                                               systematic=syst,
-                                              weight=evtWeight[lep_phosel & ele_noLoose].flatten())
+                                              weight=evtWeight[phosel_e].flatten())
             output['photon_lepton_mass'].fill(dataset=dataset,
-                                              mass=mugammaMass[lep_phosel & mu_noLoose].flatten(),
-                                              category=phoCategory[lep_phosel & mu_noLoose].flatten(),
+                                              mass=mugammaMass[phosel_mu].flatten(),
+                                              category=phoCategory[phosel_mu].flatten(),
                                               lepFlavor='muon',
                                               systematic=syst,
-                                              weight=evtWeight[lep_phosel & mu_noLoose].flatten())
+                                              weight=evtWeight[phosel_mu].flatten())
     
             output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
-                                                   mass=egammaMass[lep_phosel_3j0t & ele_noLoose].flatten(),
-                                                   category=phoCategory[lep_phosel_3j0t & ele_noLoose].flatten(),
+                                                   mass=egammaMass[phosel_3j0t_e].flatten(),
+                                                   category=phoCategory[phosel_3j0t_e].flatten(),
                                                    lepFlavor='electron',
                                                    systematic=syst,
-                                                   weight=evtWeight[lep_phosel_3j0t & ele_noLoose].flatten())
+                                                   weight=evtWeight[phosel_3j0t_e].flatten())
             output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
-                                                   mass=mugammaMass[lep_phosel_3j0t & mu_noLoose].flatten(),
-                                                   category=phoCategory[lep_phosel_3j0t & mu_noLoose].flatten(),
+                                                   mass=mugammaMass[phosel_3j0t_mu].flatten(),
+                                                   category=phoCategory[phosel_3j0t_mu].flatten(),
                                                    lepFlavor='muon',
                                                    systematic=syst,
-                                                   weight=evtWeight[lep_phosel_3j0t & mu_noLoose].flatten())
+                                                   weight=evtWeight[phosel_3j0t_mu].flatten())
             
 
         output['EventCount'] = len(df['event'])
