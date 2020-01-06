@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from cycler import cycler
 from coffea import hist
-
+import numpy as np
 
 def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=True, lumi=35.9, label="CMS Preliminary",colors=None,ratioRange=[0.5,1.5], xRange=None, yRange=None, logY=False,extraText = None, leg='upper right', binwnorm=None):
 
