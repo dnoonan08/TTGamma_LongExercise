@@ -3,7 +3,7 @@ from cycler import cycler
 from coffea import hist
 
 
-def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=True, lumi=35.9, label="CMS Preliminary",colors=None,ratio=[0.5,1.5], xRange=None, yRange=None, logY=False,extraText = None, leg='upper right'):
+def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=True, lumi=35.9, label="CMS Preliminary",colors=None,ratioRange=[0.5,1.5], xRange=None, yRange=None, logY=False,extraText = None, leg='upper right', binwnorm=None):
 
     # make a nice ratio plot
     plt.rcParams.update({
@@ -48,7 +48,7 @@ def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=Tr
         'markersize': 10.,
         'color':'k',
         'elinewidth': 1,
-        'emarker': '_'
+#        'emarker': '_'
     }
 
     if invertStack:
@@ -62,22 +62,30 @@ def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=Tr
                 density=density,
                 line_opts=None,
                 fill_opts=fill_opts,
-                error_opts=error_opts
+                error_opts=error_opts,
+                binwnorm=binwnorm
                )
-    if invertStack:
-        if type(h._axes[0])==hist.hist_tools.Cat:
-            h._axes[0]._sorted.reverse()
+    # if invertStack:
+    #     if type(h._axes[0])==hist.hist_tools.Cat:
+    #         h._axes[0]._sorted.reverse()
 
     if not hData is None:
         hist.plot1d(hData,
-#                     overlay=overlay,
+#                    overlay=overlay,
                     ax=ax,
                     clear=False,
-                    error_opts=data_err_opts
+                    error_opts=data_err_opts,
+                    binwnorm=binwnorm
                    )
 
     ax.autoscale(axis='x', tight=True)
     ax.set_ylim(0, None)
+    if not binwnorm is None:
+        ax.set_ylabel(f"<Counts/{binwnorm}>")
+        if '[' in ax.get_xlabel():
+            units = ax.get_xlabel().split('[')[-1].split(']')[0]
+            ax.set_ylabel(f"<Counts / {binwnorm} {units}>")
+            
     ax.set_xlabel(None)
     
     if leg=="right":
@@ -91,19 +99,13 @@ def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=Tr
         leg_loc='upper left'
 
     if not leg is None:
-        if invertStack:
-            handles, labels = ax.get_legend_handles_labels()
-            if hData is None:
-                handles = handles[-2::-1]+handles[-1:-2:-1]
-                labels = labels[-2::-1]+labels[-1:-2:-1]            
-            else:
-                handles = handles[-1:-2:-1] +handles[-3::-1]+handles[-2:-3:-1]
-                labels = labels[-1:-2:-1] +labels[-3::-1]+labels[-2:-3:-1]
-            ax.legend(handles, labels,bbox_to_anchor=leg_anchor,loc=leg_loc)
-        else:
-            ax.legend(bbox_to_anchor=leg_anchor,loc=leg_loc)
+        handles, labels = ax.get_legend_handles_labels()
+        if not hData is None:
+            handles = handles[-1:]+handles[:-1]
+            labels = ['Data']+labels[:-1]            
+        ax.legend(handles, labels,bbox_to_anchor=leg_anchor,loc=leg_loc)
 
-    
+
     
     if not hData is None:
         hist.plotratio(hData, h.sum(overlay),
@@ -114,7 +116,8 @@ def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=Tr
                        unc='num'
                       )
         rax.set_ylabel('Ratio')
-        rax.set_ylim(ratio[0],ratio[1])
+            
+        rax.set_ylim(ratioRange[0],ratioRange[1])
 
     
     if logY:
@@ -150,3 +153,21 @@ def plotWithRatio(h, hData, overlay, stacked=True, density=False, invertStack=Tr
                     transform=ax.transAxes
                    )
 
+
+def SetRangeHist(histogram, axisName, lower_bound=None, upper_bound=None):
+    old_axis = histogram.axis(axisName)
+    lower_idx, upper_idx = None, None
+    if not lower_bound is None:
+        lower_idx = np.where(old_axis.edges()>=lower_bound)[0][0]
+    if not upper_bound is None:
+        upper_idx = np.where(old_axis.edges()<=upper_bound)[0][-1]+1
+
+    new_axis = hist.Bin(old_axis.name, old_axis.label, old_axis.edges()[lower_idx:upper_idx])
+    return histogram.rebin(axisName, new_axis)
+    
+def RebinHist(histogram, axisName, rebinN=1): 
+    old_axis = histogram.axis(axisName)
+    new_axis = hist.Bin(old_axis.name, old_axis.label, old_axis.edges()[::rebinN])
+    return histogram.rebin(axisName, new_axis)
+    
+        

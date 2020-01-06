@@ -4,9 +4,9 @@ lumis = {2016 : 35860.,
          }
 
 crossSections = {
-    'TTGamma_SingleLept'  : 10.234 ,
-    'TTGamma_Dilepton'    : 2.4243 ,
-    'TTGamma_Hadronic'    : 10.528 ,
+    'TTGamma_SingleLept'  : 5.125*1.4,
+    'TTGamma_Dilepton'    : 1.512*1.4,
+    'TTGamma_Hadronic'    : 4.213*1.4,
 
     'TTGamma_SingleLept_small'  : 10.234 ,
     'TTGamma_Dilepton_small'    : 2.4243 ,

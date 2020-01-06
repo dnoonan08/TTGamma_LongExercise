@@ -680,27 +680,26 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # lep_noLoose = mu_noLoose| ele_noLoose
         
-        lep_jetSel = ((tightJets.counts >= 4) & ((tightJets.btag>bTagWP).sum() >= 1))
-        lep_jetSel_3j0t = ((tightJets.counts >= 3) & ((tightJets.btag>bTagWP).sum() == 0))
-
         selection = processor.PackedSelection()
         selection.add('eleSel',ele_noLoose)
         selection.add('muSel',mu_noLoose)
 
-        selection.add('jetSel', (tightJets.counts >= 4) & ((tightJets.btag>bTagWP).sum() >= 1) )
+        nJets = 4
+
+        selection.add('jetSel', (tightJets.counts >= nJets) & ((tightJets.btag>bTagWP).sum() >= 1) )
         selection.add('jetSel_3j0t', (tightJets.counts >= 3) & ((tightJets.btag>bTagWP).sum() == 0) )
 
         if not isData:
-            selection.add('jetSel_JERUp', (tightJets_JERUp.counts >= 4) & ((tightJets_JERUp.btag>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JERUp', (tightJets_JERUp.counts >= nJets) & ((tightJets_JERUp.btag>bTagWP).sum() >= 1) )
             selection.add('jetSel_JERUp_3j0t', (tightJets_JERUp.counts >= 3) & ((tightJets_JERUp.btag>bTagWP).sum() == 0) )
             
-            selection.add('jetSel_JERDown', (tightJets_JERDown.counts >= 4) & ((tightJets_JERDown.btag>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JERDown', (tightJets_JERDown.counts >= nJets) & ((tightJets_JERDown.btag>bTagWP).sum() >= 1) )
             selection.add('jetSel_JERDown_3j0t', (tightJets_JERDown.counts >= 3) & ((tightJets_JERDown.btag>bTagWP).sum() == 0) )
             
-            selection.add('jetSel_JESUp', (tightJets_JESUp.counts >= 4) & ((tightJets_JESUp.btag>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JESUp', (tightJets_JESUp.counts >= nJets) & ((tightJets_JESUp.btag>bTagWP).sum() >= 1) )
             selection.add('jetSel_JESUp_3j0t', (tightJets_JESUp.counts >= 3) & ((tightJets_JESUp.btag>bTagWP).sum() == 0) )
             
-            selection.add('jetSel_JESDown', (tightJets_JESDown.counts >= 4) & ((tightJets_JESDown.btag>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JESDown', (tightJets_JESDown.counts >= nJets) & ((tightJets_JESDown.btag>bTagWP).sum() >= 1) )
             selection.add('jetSel_JESDown_3j0t', (tightJets_JESDown.counts >= 3) & ((tightJets_JESDown.btag>bTagWP).sum() == 0) )
 
         selection.add('zeroPho', tightPhotons.counts == 0)
