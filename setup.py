@@ -24,7 +24,6 @@ setup(name="ttgamma",
       url="https://github.com/dnoonan08/TTGamma_LongExercise",
       install_requires=[
           "coffea",
-          "rhalphalib",
       ],
       setup_requires=["flake8"] + pytest_runner,
 )
