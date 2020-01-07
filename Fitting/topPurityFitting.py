@@ -1,5 +1,7 @@
 from ROOT import TFile, TFractionFitter, TObjArray
 
+import pprint
+
 _file = TFile("../RootFiles/M3_Output.root")
 
 
@@ -25,7 +27,8 @@ systematics  = ["nominal",
                 "muEffWeightDown",
                 "muEffWeightUp",
                 "puWeightDown",
-                "puWeightUp"]
+                "puWeightUp",
+]
 
 results = {}
 
@@ -41,10 +44,15 @@ for syst in systematics:
     
     status = int(fit.Fit())
 
-    print (status)
+    if not status==0:
+        print (f"Error in fit while processing {syst} sample: exit status {status}")
     topPurity = fit.GetFitter().Result().Parameters()[0]
-    results[syst] = topPurity
-    
-    print (syst, topPurity)
+    topPurityErr = fit.GetFitter().Result().ParError(0)
+
+    results[syst] = (topPurity, topPurityErr)
 
     del fit
+
+
+pp = pprint.PrettyPrinter(indent=4)
+pprint.pprint(results)

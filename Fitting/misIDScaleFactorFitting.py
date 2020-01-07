@@ -2,7 +2,7 @@ from ROOT import TFile, TFractionFitter, TObjArray
 
 import pprint
 
-_file = TFile("../RootFiles/Isolation_Output.root")
+_file = TFile("../RootFiles/MisID_Output_electron.root")
 
 
 systematics  = ["nominal",
@@ -36,9 +36,15 @@ data = _file.Get("dataObs")
     
 for syst in systematics:
 
+    misID = _file.Get(f"MisIDele_{syst}")
+    otherMC = _file.Get(f"Other_{syst}")
+    otherMC.Add(_file.Get(f"WGamma_{syst}"))
+    otherMC.Add(_file.Get(f"ZGamma_{syst}"))
+
+
     mc = TObjArray(2)
-    mc.Add(_file.Get(f"Isolated_{syst}"))
-    mc.Add(_file.Get(f"NonPrompt_{syst}"))
+    mc.Add(misID)
+    mc.Add(otherMC)
 
     fit = TFractionFitter(data, mc,"q")
     
@@ -46,27 +52,11 @@ for syst in systematics:
 
     fitResults = fit.GetFitter().Result().Parameters()
 
-    isolatedSF  = data.Integral()*fitResults[0]/mc[0].Integral()
-    nonPromptSF = data.Integral()*fitResults[1]/mc[1].Integral()
-
-    isolatedRate = mc[0].GetBinContent(1)*isolatedSF
-    nonPromptRate = mc[1].GetBinContent(1)*nonPromptSF
-    totalRate = (isolatedRate + nonPromptRate)
-
+    misIDSF  = data.Integral()*fitResults[0]/mc[0].Integral()
     if not status==0:
         print (f"Error in fit while processing {syst} sample: exit status {status}")
-    
-    phoPurity = isolatedRate / totalRate
 
-    fitError_iso = fit.GetFitter().Result().ParError(0)
-    fitError_np = fit.GetFitter().Result().ParError(1)
-    isoError = data.Integral()*fitError_iso*mc[0].GetBinContent(1)/mc[0].Integral()
-    npError = data.Integral()*fitError_np*mc[1].GetBinContent(1)/mc[1].Integral()
-
-    
-    phoPurityErr = ((isoError * (1 + phoPurity) / totalRate)**2 + (npError*phoPurity/totalRate)**2)**0.5
-
-    results[syst] = (phoPurity, phoPurityErr)    
+    results[syst] = misIDSF
 
     del fit
 
