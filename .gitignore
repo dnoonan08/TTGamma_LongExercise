@@ -6,3 +6,7 @@ __pycache__
 build
 dist
 *~
+*.coffea
+*.root
+coffeaenv*
+ttgamma.tgz
