@@ -1,1 +1,1 @@
-ttgamma/ScaleFactors
+recursive-include ttgamma/ScaleFactors *
