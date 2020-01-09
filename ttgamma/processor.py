@@ -1,7 +1,7 @@
 import time
 
 from coffea import hist, util
-from coffea.analysis_objects import JaggedCandidateArray
+from coffea.analysis_objects import JaggedCandidateArray, JaggedTLorentzVectorArray
 import coffea.processor as processor
 from coffea.jetmet_tools import FactorizedJetCorrector, JetCorrectionUncertainty, JetTransformer, JetResolution, JetResolutionScaleFactor
 from coffea.lookup_tools import extractor, dense_lookup
@@ -9,14 +9,17 @@ from coffea.lookup_tools import extractor, dense_lookup
 import uproot
 
 from awkward import JaggedArray
+from uproot_methods.classes.TLorentzVector import TLorentzVectorArray
 import numpy as np
 import pickle
 
-import numba
 import re
 
 from .utils.crossSections import *
 from .utils.efficiencies import getMuSF, getEleSF
+
+from .utils.genParentage import maxHistoryPDGID
+from .utils.updateJets import updateJetP4
 
 import os.path
 cwd = os.path.dirname(__file__)
@@ -29,17 +32,6 @@ with open(f'{cwd}/utils/taggingEfficienciesDenseLookup.pkl', 'rb') as _file:
 puLookup = util.load(f'{cwd}/ScaleFactors/puLookup.coffea')
 puLookup_Down = util.load(f'{cwd}/ScaleFactors/puLookup_Down.coffea')
 puLookup_Up = util.load(f'{cwd}/ScaleFactors/puLookup_Up.coffea')
-
-
-#files for mu scale factors
-muSFFileList = [{'id'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunBCDEF_SF_ID.root", "NUM_TightID_DEN_genTracks_eta_pt"),
-                 'iso'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunBCDEF_SF_ISO.root", "NUM_TightRelIso_DEN_TightIDandIPCut_eta_pt"),
-                 'trig'  : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_trigger_EfficienciesAndSF_RunBtoF.root", "IsoMu24_OR_IsoTkMu24_PtEtaBins/abseta_pt_ratio"),
-                 'scale' : 19.656062760/35.882515396},
-                {'id'     : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunGH_SF_ID.root", "NUM_TightID_DEN_genTracks_eta_pt"),
-                 'iso'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunGH_SF_ISO.root", "NUM_TightRelIso_DEN_TightIDandIPCut_eta_pt"),
-                 'trig'  : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_trigger_EfficienciesAndSF_RunGtoH.root", "IsoMu24_OR_IsoTkMu24_PtEtaBins/abseta_pt_ratio"),
-                 'scale' : 16.226452636/35.882515396}]
 
 
 #create and load jet extractor
@@ -71,33 +63,17 @@ JERsf = JetResolutionScaleFactor(**{name:Jetevaluator[name] for name in jersf_na
 Jet_transformer = JetTransformer(jec=JECcorrector,junc=JECuncertainties, jer = JER, jersf = JERsf)
 
 
-#function to find the highest PID for particles
-@numba.jit(nopython=True)
-def maxHistoryPDGID(idxList_contents, idxList_starts, idxList_stops, pdgID_contents, pdgID_starts, pdgID_stops, motherIdx_contents, motherIdx_starts, motherIdx_stops):
-    maxPDGID_array = np.ones(len(idxList_starts),np.int32)*-1
-    for i in range(len(idxList_starts)):
-        if idxList_starts[i]==idxList_stops[i]:
-            continue
-            
-        idxList = idxList_contents[idxList_starts[i]:idxList_stops[i]]
-        pdgID = pdgID_contents[pdgID_starts[i]:pdgID_stops[i]]
-        motherIdx = motherIdx_contents[motherIdx_starts[i]:motherIdx_stops[i]]
-    
-        idx = idxList[0]
-        maxPDGID = -1
-        while idx>-1:
-            pdg = pdgID[idx]
-            maxPDGID = max(maxPDGID, abs(pdg))
-            idx = motherIdx[idx]
-        maxPDGID_array[i] = maxPDGID
-    return maxPDGID_array
-
-
 
 # Look at ProcessorABC to see the expected methods and what they are supposed to do
 class TTGammaProcessor(processor.ProcessorABC):
-    def __init__(self, runNum = -1, eventNum = -1, mcEventYields = None):
+    def __init__(self, mcEventYields = None, jetSyst='nominal'):
         self.mcEventYields = mcEventYields
+
+
+        if not jetSyst in ['nominal','JERUp','JERDown','JESUp','JESDown']:
+            raise Exception(f'{jetSyst} is not in acceptable jet systematic types [nominal, JERUp, JERDown, JESUp, JESDown]')
+
+        self.jetSyst = jetSyst
 
         dataset_axis = hist.Cat("dataset", "Dataset")
         lep_axis = hist.Cat("lepFlavor", "Lepton Flavor")
@@ -133,56 +109,25 @@ class TTGammaProcessor(processor.ProcessorABC):
             'EventCount':processor.value_accumulator(int)
         })
 
-        self.eventNum = eventNum
-        self.runNum = runNum
-
         ext = extractor()
         ext.add_weight_sets([f"btag2016 * {cwd}/ScaleFactors/Btag/DeepCSV_2016LegacySF_V1.btag.csv"])
         ext.finalize()
         self.evaluator = ext.make_evaluator()
         
-        ele_id_file = uproot.open(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele2016/2016LegacyReReco_ElectronTight_Fall17V2.root')
-        self.ele_id_sf = dense_lookup.dense_lookup(ele_id_file["EGamma_SF2D"].values, ele_id_file["EGamma_SF2D"].edges)
-        self.ele_id_err = dense_lookup.dense_lookup(ele_id_file["EGamma_SF2D"].variances**0.5, ele_id_file["EGamma_SF2D"].edges)
+        self.ele_id_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_id_sf.coffea')
+        self.ele_id_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_id_err.coffea')
 
-        ele_reco_file = uproot.open(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele2016/egammaEffi.txt_EGM2D_runBCDEF_passingRECO.root')
-        self.ele_reco_sf = dense_lookup.dense_lookup(ele_reco_file["EGamma_SF2D"].values, ele_reco_file["EGamma_SF2D"].edges)
-        self.ele_reco_err = dense_lookup.dense_lookup(ele_reco_file["EGamma_SF2D"].variances**.5, ele_reco_file["EGamma_SF2D"].edges)
+        self.ele_reco_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_reco_sf.coffea')
+        self.ele_reco_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_reco_err.coffea')
 
-        
-        mu_id_vals = 0
-        mu_id_err = 0
-        mu_iso_vals = 0
-        mu_iso_err = 0
-        mu_trig_vals = 0
-        mu_trig_err = 0
+        self.mu_id_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_id_sf.coffea')
+        self.mu_id_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_id_err.coffea')
 
-        for scaleFactors in muSFFileList:
-            id_file = uproot.open(scaleFactors['id'][0])
-            iso_file = uproot.open(scaleFactors['iso'][0])
-            trig_file = uproot.open(scaleFactors['trig'][0])
+        self.mu_iso_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_iso_sf.coffea')
+        self.mu_iso_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_iso_err.coffea')
 
-            mu_id_vals += id_file[scaleFactors['id'][1]].values * scaleFactors['scale']
-            mu_id_err += id_file[scaleFactors['id'][1]].variances**0.5 * scaleFactors['scale']
-            mu_id_edges = id_file[scaleFactors['id'][1]].edges
-
-            mu_iso_vals += iso_file[scaleFactors['iso'][1]].values * scaleFactors['scale']
-            mu_iso_err += iso_file[scaleFactors['iso'][1]].variances**0.5 * scaleFactors['scale']
-            mu_iso_edges = iso_file[scaleFactors['iso'][1]].edges
-
-            mu_trig_vals += trig_file[scaleFactors['trig'][1]].values * scaleFactors['scale']
-            mu_trig_err += trig_file[scaleFactors['trig'][1]].variances**0.5 * scaleFactors['scale']
-            mu_trig_edges = trig_file[scaleFactors['trig'][1]].edges
-
-        self.mu_id_sf = dense_lookup.dense_lookup(mu_id_vals, mu_id_edges)
-        self.mu_id_err = dense_lookup.dense_lookup(mu_id_err, mu_id_edges)
-        self.mu_iso_sf = dense_lookup.dense_lookup(mu_iso_vals, mu_iso_edges)
-        self.mu_iso_err = dense_lookup.dense_lookup(mu_iso_err, mu_iso_edges)
-        self.mu_trig_sf = dense_lookup.dense_lookup(mu_trig_vals, mu_trig_edges)
-        self.mu_trig_err = dense_lookup.dense_lookup(mu_trig_err, mu_trig_edges)
-        
-
-        
+        self.mu_trig_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_trig_sf.coffea')
+        self.mu_trig_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_trig_err.coffea')
         
     @property
     def accumulator(self):
@@ -249,7 +194,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             massRaw=df['Jet_mass'] * (1-df['Jet_rawFactor']),
             hadFlav=df['Jet_hadronFlavour'] if not isData else np.ones_like(df['Jet_jetId']),
             genJetIdx=df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
-            ptGenJet=np.zeros_like(df['Jet_pt']), #df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
+            ptGenJet=np.zeros_like(df['Jet_pt']),
         )
 
         #load photon objects
@@ -290,8 +235,10 @@ class TTGammaProcessor(processor.ProcessorABC):
             jets['ptGenJet'][jets.genJetIdx>-1] = genJet[jets.genJetIdx[jets.genJetIdx>-1]].pt
             jets['rho'] = jets.pt.ones_like()*rho
 
+            #adds additional columns to the jets array, containing the jet pt with JEC and JER variations
             Jet_transformer.transform(jets, forceStochastic=False)
             
+
         if not isData:
 
             #load gen parton objects
@@ -352,7 +299,13 @@ class TTGammaProcessor(processor.ProcessorABC):
             except:
                 hasWeights=False
 
-            
+
+        # Overlap removal between related samples
+        # TTGamma and TTbar
+        # WGamma and WJets
+        # ZGamma and ZJets
+        # We need to remove events from TTbar which are already counted in the phase space in which the TTGamma sample is produced
+        # photon with pT> 10 GeV, eta<5, and at least dR>0.1 from other gen objects 
         doOverlapRemoval = False
         if 'TTbar' in dataset:
             doOverlapRemoval = True
@@ -377,24 +330,24 @@ class TTGammaProcessor(processor.ProcessorABC):
                                 (genPart.pdgid==22) & 
                                 (genPart.status==1)
                                )
-            
+            #potential overlap photons are only those passing the kinematic cuts
             OverlapPhotons = genPart[overlapPhoSelect] 
 
+            #if the overlap photon is actually from a non prompt decay, it's not part of the phase space of the separate sample
             idx = OverlapPhotons.motherIdx
             maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
                                         genpdgid.content, genpdgid.starts, genpdgid.stops, 
                                         genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
+
             
-            isNonPrompt = (maxParent>37).any()
-
             finalGen = genPart[((genPart.status==1)|(genPart.status==71)) & ~((abs(genPart.pdgid)==12) | (abs(genPart.pdgid)==14) | (abs(genPart.pdgid)==16))]
-
             genPairs = OverlapPhotons['p4'].cross(finalGen['p4'],nested=True)
             ##remove the case where the cross produce is the gen photon with itself
             genPairs = genPairs[~(genPairs.i0==genPairs.i1)]
-
+            #find closest gen particle to overlap photons
             dRPairs = genPairs.i0.delta_r(genPairs.i1)
-            
+
+            #the event is overlapping with the separate sample if there is an overlap photon passing the dR cut and not coming from hadronic activity
             isOverlap = ((dRPairs.min()>overlapDR) & (maxParent<37)).any()
             passOverlapRemoval = ~isOverlap
         else:
@@ -522,32 +475,30 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         jetPho = jets['p4'].cross(tightPhotons['p4'],nested=True)
         dRjetpho = ((jetPho.i0.delta_r(jetPho.i1)).min()>0.1) | (tightPhotons.counts==0)
-        
-        jetSelectNoPt = ((abs(jets.eta) < 2.4) &
-                         ((jets.jetId >> jetIDbit & 1)==1) &
-                         dRjetmu & dRjetele & dRjetpho )
-        
-        jetSelect = jetSelectNoPt & (jets.pt > 30)
+
 
         if not isData:
-            jetSelect_JESUp = jetSelectNoPt & (jets.pt_jes_up > 30)
-            jetSelect_JESDown = jetSelectNoPt & (jets.pt_jes_down > 30)
-            
-            jetSelect_JERUp = jetSelectNoPt & (jets.pt_jer_up > 30)
-            jetSelect_JERDown = jetSelectNoPt & (jets.pt_jer_down > 30)
+            if self.jetSyst=='JERUp':
+                updateJetP4(jets, pt = jets.pt_jer_up, mass = jets.mass_jer_up)
+            if self.jetSyst=='JERDown':
+                updateJetP4(jets, pt = jets.pt_jer_down, mass = jets.mass_jer_down)
+            if self.jetSyst=='JESUp':
+                updateJetP4(jets, pt = jets.pt_jes_up, mass = jets.mass_jes_up)
+            if self.jetSyst=='JESDown':
+                updateJetP4(jets, pt = jets.pt_jes_down, mass = jets.mass_jes_down)
 
+        jetSelect = ((jets.pt > 30) &
+                     (abs(jets.eta) < 2.4) &
+                     ((jets.jetId >> jetIDbit & 1)==1) &
+                     dRjetmu & dRjetele & dRjetpho )
+        
         tightJets = jets[jetSelect]
-        if not isData:
-            tightJets_JERUp = jets[jetSelect_JERUp]
-            tightJets_JERDown = jets[jetSelect_JERDown]
-            tightJets_JESUp = jets[jetSelect_JESUp]
-            tightJets_JESDown = jets[jetSelect_JESDown]
-        
 
         #find jets passing DeepCSV medium working point
         bTagWP = 0.6321   #2016 DeepCSV working point
         btagged = tightJets.btag>bTagWP
 
+        bTaggedJets = tightJets[btagged]
 
         ## Define M3, mass of 3-jet pair with highest pT
         triJet = tightJets['p4'].choose(3)
@@ -555,30 +506,8 @@ class TTGammaProcessor(processor.ProcessorABC):
         triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
         M3 = triJetMass[triJetPt.argmax()]
 
-        if not isData:
-            triJet = tightJets_JESUp['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JESUp = triJetMass[triJetPt.argmax()]
-            
-            triJet = tightJets_JESDown['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JESDown = triJetMass[triJetPt.argmax()]
-            
-            triJet = tightJets_JERUp['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JERUp = triJetMass[triJetPt.argmax()]
-            
-            triJet = tightJets_JERDown['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JERDown = triJetMass[triJetPt.argmax()]
-
-
-        leadingMuon = tightMuon[::1] 
-        leadingElectron = tightElectron[::1]        
+        leadingMuon = tightMuon[:,:1] 
+        leadingElectron = tightElectron[:,:1]        
         
         leadingPhoton = tightPhotons[:,:1]
         leadingPhotonLoose = loosePhotons[:,:1]
@@ -595,15 +524,15 @@ class TTGammaProcessor(processor.ProcessorABC):
             #### Photon categories, using genIdx branch
             idx = leadingPhoton.genIdx
             
-            # reco photons matched to a generated photon
-            matchedPho = (genpdgid[idx]==22).any()
-            # reco photons really generated as electrons
-            isMisIDele = (abs(genpdgid[idx])==11).any()
-
             # look through gen particle history, finding the highest PDG ID
             maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
                                         genpdgid.content, genpdgid.starts, genpdgid.stops, 
                                         genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
+
+            # reco photons matched to a generated photon
+            matchedPho = (genpdgid[idx]==22).any()
+            # reco photons really generated as electrons
+            isMisIDele = (abs(genpdgid[idx])==11).any()
 
             # if the gen photon has a PDG ID > 25 in it's history, it has a hadronic parent
             hadronicParent = maxParent>25
@@ -661,26 +590,14 @@ class TTGammaProcessor(processor.ProcessorABC):
         #create a selection object
         selection = processor.PackedSelection()
 
+        #add selection 'eleSel', for events passing the electron event selection, and muSel for those passing the muon event selection
         selection.add('eleSel',electron_eventSelection)
         selection.add('muSel',muon_eventSelection)
 
-        nJets = 4
-
-        selection.add('jetSel', (tightJets.counts >= nJets) & ((tightJets.btag>bTagWP).sum() >= 1) )
-        selection.add('jetSel_3j0t', (tightJets.counts >= 3) & ((tightJets.btag>bTagWP).sum() == 0) )
-
-        if not isData:
-            selection.add('jetSel_JERUp', (tightJets_JERUp.counts >= nJets) & ((tightJets_JERUp.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERUp_3j0t', (tightJets_JERUp.counts >= 3) & ((tightJets_JERUp.btag>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JERDown', (tightJets_JERDown.counts >= nJets) & ((tightJets_JERDown.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERDown_3j0t', (tightJets_JERDown.counts >= 3) & ((tightJets_JERDown.btag>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JESUp', (tightJets_JESUp.counts >= nJets) & ((tightJets_JESUp.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESUp_3j0t', (tightJets_JESUp.counts >= 3) & ((tightJets_JESUp.btag>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JESDown', (tightJets_JESDown.counts >= nJets) & ((tightJets_JESDown.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESDown_3j0t', (tightJets_JESDown.counts >= 3) & ((tightJets_JESDown.btag>bTagWP).sum() == 0) )
+        #add two jet selection criteria
+        #   First, 'jetSel' which selects events with at least 4 jets and at least
+        selection.add('jetSel', (tightJets.counts >= 4) & (bTaggedJets.counts >= 1) )
+        selection.add('jetSel_3j0t', (tightJets.counts >= 3) & (bTaggedJets.counts == 0) )
 
         selection.add('zeroPho', tightPhotons.counts == 0)
         selection.add('onePho', tightPhotons.counts == 1)
@@ -819,7 +736,10 @@ class TTGammaProcessor(processor.ProcessorABC):
                 weights.add('Q2Scale',weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
 
 
-        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown', 'JERUp', 'JERDown', 'JESUp', 'JESDown']
+        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+
+        if not self.jetSyst=='nominal':
+            systList=[self.jetSyst]
 
         if isData:
             systList = ['noweight']
@@ -836,10 +756,6 @@ class TTGammaProcessor(processor.ProcessorABC):
                 evtWeight = weights.weight(weightSyst)
 
             jetSelType = 'jetSel'
-            M3var = M3
-            if syst in ['JERUp','JERDown','JESUp','JESDown']:
-                jetSelType = f'jetSel_{syst}'
-                M3var = eval(f'M3_{syst}')
 
             for lepton in ['electron','muon']:
                 if lepton=='electron':
@@ -847,9 +763,9 @@ class TTGammaProcessor(processor.ProcessorABC):
                 if lepton=='muon':
                     lepSel='muSel'
 
-                phosel = selection.all(*(lepSel, jetSelType, 'onePho'))
-                phoselLoose = selection.all(*(lepSel, jetSelType, 'loosePho') )
-                zeroPho = selection.all(*(lepSel, jetSelType, 'zeroPho') )
+                phosel = selection.all( *(lepSel, 'jetSel', 'onePho'))
+                phoselLoose = selection.all( *(lepSel, 'jetSel', 'loosePho') )
+                zeroPho = selection.all( *(lepSel, 'jetSel', 'zeroPho') )
 
                 output['photon_pt'].fill(dataset=dataset,
                                          pt=tightPhotons.p4.pt[:,:1][phosel].flatten(),
@@ -875,24 +791,24 @@ class TTGammaProcessor(processor.ProcessorABC):
                 
                 
                 output['M3'].fill(dataset=dataset,
-                                  M3=M3var[phosel].flatten(),
+                                  M3=M3[phosel].flatten(),
                                   category=phoCategoryLoose[phosel].flatten(),
                                   lepFlavor=lepton,
                                   systematic=syst,
                                   weight=evtWeight[phosel].flatten())
                 
                 output['M3Presel'].fill(dataset=dataset,
-                                        M3=M3var[zeroPho].flatten(),
+                                        M3=M3[zeroPho].flatten(),
                                         lepFlavor=lepton,
                                         systematic=syst,
                                         weight=evtWeight[zeroPho].flatten())                            
     
             
-            phosel_e = selection.all(*('eleSel', jetSelType, 'onePho') )
-            phosel_mu = selection.all(*('muSel', jetSelType, 'onePho') )
+            phosel_e  = selection.all( *('eleSel', 'jetSel', 'onePho') )
+            phosel_mu = selection.all( *('muSel', 'jetSel', 'onePho') )
 
-            phosel_3j0t_e = selection.all(*('eleSel', f'{jetSelType}_3j0t', 'onePho') )
-            phosel_3j0t_mu = selection.all(*('muSel', f'{jetSelType}_3j0t', 'onePho') )
+            phosel_3j0t_e  = selection.all( *('eleSel', 'jetSel_3j0t', 'onePho') )
+            phosel_3j0t_mu = selection.all( *('muSel', 'jetSel_3j0t', 'onePho') )
 
             output['photon_lepton_mass'].fill(dataset=dataset,
                                               mass=egammaMass[phosel_e].flatten(),
