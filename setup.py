@@ -24,6 +24,7 @@ setup(name="ttgamma",
       url="https://github.com/dnoonan08/TTGamma_LongExercise",
       install_requires=[
           "coffea",
+          "xxhash",  # for LZ4 input files
       ],
       setup_requires=["flake8"] + pytest_runner,
 )
