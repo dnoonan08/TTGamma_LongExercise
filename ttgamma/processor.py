@@ -67,8 +67,11 @@ Jet_transformer = JetTransformer(jec=JECcorrector,junc=JECuncertainties, jer = J
 # Look at ProcessorABC to see the expected methods and what they are supposed to do
 class TTGammaProcessor(processor.ProcessorABC):
     def __init__(self, mcEventYields = None, jetSyst='nominal'):
-        self.mcEventYields = mcEventYields
+        ################################
+        # INITIALIZE COFFEA PROCESSOR
+        ################################
 
+        self.mcEventYields = mcEventYields
 
         if not jetSyst in ['nominal','JERUp','JERDown','JESUp','JESDown']:
             raise Exception(f'{jetSyst} is not in acceptable jet systematic types [nominal, JERUp, JERDown, JESUp, JESDown]')
@@ -289,13 +292,15 @@ class TTGammaProcessor(processor.ProcessorABC):
         ##################
         # OBJECT SELECTION
         ##################
-
+        # PART 1A Uncomment to add in object selection
+        """
+        # 1. ADD SELECTION
         #select tight muons
-        muonSelectTight = ((muons.pt>30) & 
-                           (abs(muons.eta)<2.4) & 
-                           (muons.tightId) & 
-                           (muons.relIso < 0.15)
-                          )
+        # tight muons should have a pt of at least 30 GeV, |eta| < 2.4, pass the tight muon ID cut (tightID variable), and have a relative isolation of less than 0.15
+        muonSelectTight = ((?) &
+                           (?) &
+                           ? &
+                           (?))
 
         #select loose muons
         muonSelectLoose = ((muons.pt>15) & 
@@ -315,21 +320,23 @@ class TTGammaProcessor(processor.ProcessorABC):
                      (abs(electrons.eta) > 1.479)  & (abs(electrons.dz) < 0.2)
                     )
 
-        
+
         #select tight electrons
-        electronSelectTight = ((electrons.pt>35) & 
-                               (abs(electrons.eta)<2.1) & 
-                               eleEtaGap &      
-                               (electrons.cutBased>=4) &
-                               elePassD0 & 
-                               elePassDZ
-                              )
+        # 1. ADD SELECTION
+        #select tight electrons
+        # tight electrons should have a pt of at least 35 GeV, |eta| < 2.1, pass the cut based electron id (cutBased variable in NanoAOD>=4), and pass the etaGap, D0, and DZ cuts defined above
+        electronSelectTight = ((?) &
+                               (?) &
+                               (?) &
+                               ? & 
+                               ? & 
+                               ? )
 
         #select loose electrons
         electronSelectLoose = ((electrons.pt>15) & 
                                (abs(electrons.eta)<2.4) & 
-                               eleEtaGap &      
                                (electrons.cutBased>=1) &
+                               eleEtaGap &      
                                elePassD0 & 
                                elePassDZ & 
                                np.invert(electronSelectTight)
@@ -401,21 +408,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
 
 
-        ##medium jet ID cut
-        jetIDbit = 1
-
-        ##check dR jet,lepton & jet,photon
-        jetMu = jets['p4'].cross(tightMuon['p4'],nested=True)
-        dRjetmu = ((jetMu.i0.delta_r(jetMu.i1)).min()>0.4) | (tightMuon.counts==0)
-
-        jetEle = jets['p4'].cross(tightElectron['p4'],nested=True)
-        dRjetele = ((jetEle.i0.delta_r(jetEle.i1)).min()>0.4) | (tightElectron.counts==0)
-
-        jetPho = jets['p4'].cross(tightPhotons['p4'],nested=True)
-        dRjetpho = ((jetPho.i0.delta_r(jetPho.i1)).min()>0.1) | (tightPhotons.counts==0)
-
-
-        #update jet kinematics based on 
+        #update jet kinematics based on jete energy systematic uncertainties
         if not isData:
             genJet = JaggedCandidateArray.candidatesfromcounts(
                 df['nGenJet'],
@@ -439,14 +432,28 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             # 4. ADD SYSTEMATICS
             #   If processing a jet systematic (based on value of self.jetSyst variable) update the jet pt and mass to reflect the jet systematic uncertainty variations
-            #   Use the function updateJetP4(jets, pt=NEWPT, mass=NEWMASS)
+            #   Use the function updateJetP4(jets, pt=NEWPT, mass=NEWMASS) to update the pt and mass
+
+
+        ##check dR jet,lepton & jet,photon
+        jetMu = jets['p4'].cross(tightMuon['p4'],nested=True)
+        dRjetmu = ((jetMu.i0.delta_r(jetMu.i1)).min()>0.4) | (tightMuon.counts==0)
+
+        jetEle = jets['p4'].cross(tightElectron['p4'],nested=True)
+        dRjetele = ((jetEle.i0.delta_r(jetEle.i1)).min()>0.4) | (tightElectron.counts==0)
+
+        jetPho = jets['p4'].cross(tightPhotons['p4'],nested=True)
+        dRjetpho = ((jetPho.i0.delta_r(jetPho.i1)).min()>0.1) | (tightPhotons.counts==0)
 
 
 
-        jetSelect = ((jets.pt > 30) &
-                     (abs(jets.eta) < 2.4) &
-                     ((jets.jetId >> jetIDbit & 1)==1) &
-                     dRjetmu & dRjetele & dRjetpho )
+        # 1. ADD SELECTION
+        #select good jets
+        # jetsshould have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above (dRjetmu, dRjetele, dRjetpho)
+        jetSelect = ((?) &
+                     (?) &
+                     ((jets.jetId >> 1 & 1)==1) &
+                     ? & ? & ? )
         
         # 1. ADD SELECTION
         #select the subset of jets passing the jetSelect cuts
@@ -459,13 +466,14 @@ class TTGammaProcessor(processor.ProcessorABC):
         # 1. ADD SELECTION
         # select the subset of tightJets which pass the Deep CSV tagger
         bTaggedJets = ?
-
+        """
 
 
         #####################
         # EVENT SELECTION
         #####################
-        
+        ### PART 1B: Uncomment to add event selection
+        """
         # 1. ADD SELECTION
         ## apply triggers
         # muon events should be triggered by either the HLT_IsoMu24 or HLT_IsoTkMu24 triggers
@@ -533,14 +541,14 @@ class TTGammaProcessor(processor.ProcessorABC):
         selection.add('onePho', ?)
         # add selection for events with exactly 1 loose photon
         selection.add('loosePho', ?)
-
-
-
+        """
 
         ##################
         # EVENT VARIABLES
         ##################
 
+        # PART 2: Uncomment to begin implementing event variables
+        """
         # 2. DEFINE VARIABLES
         ## Define M3, mass of 3-jet pair with highest pT
         # find all possible 3-jet combinations in the events (hint: using the .choose() method of jagged arrays ) 
@@ -631,7 +639,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             #define integer definition for the photon category axis
             phoCategoryLoose = 1*isGenPhoLoose + 2*isMisIDeleLoose + 3*isHadPhoLoose + 4*isHadFakeLoose
-
+        """
 
         ################
         # EVENT WEIGHTS
@@ -650,7 +658,8 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             weights.add('lumiWeight',lumiWeight)
 
-
+            # PART 4: Uncomment to add weights and systematics
+            """
             nPUTrue = df['Pileup_nTrueInt']
 
             # 4. SYSTEMATICS
@@ -662,7 +671,6 @@ class TTGammaProcessor(processor.ProcessorABC):
             puWeight_Down = ?
             # add the puWeight and it's uncertainties to the weights container
             weights.add('puWeight',weight=?, weightUp=?, weightDown=?)
-
 
 
             eleID = self.ele_id_sf(tightElectron.eta, tightElectron.pt)
@@ -823,12 +831,13 @@ class TTGammaProcessor(processor.ProcessorABC):
                 weights.add('PDF',    weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
                 weights.add('Q2Scale',weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
 
-
+            """
 
         ###################
         # FILL HISTOGRAMS
         ###################
-
+        # PART 3: Uncomment to add histograms
+        """
         #list of systematics
         systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
         if not self.jetSyst=='nominal':
@@ -920,6 +929,7 @@ class TTGammaProcessor(processor.ProcessorABC):
                                                    systematic=?,
                                                    weight=?)
             
+        """
 
         output['EventCount'] = len(df['event'])
 
