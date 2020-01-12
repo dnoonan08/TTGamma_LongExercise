@@ -34,7 +34,7 @@ systematics  = ["nominal",
 results = {}
 
 ## Get data from the input root file
-data = ?
+data = _file.Get(?)
 
 ## Loop over the list of systematics
 for syst in systematics:
@@ -61,7 +61,7 @@ for syst in systematics:
     
     ## Calculate the number of events with isolated photons, using the isolatedSF
     isolatedRate = mc[0].GetBinContent(1)*isolatedSF
-    ## Calculate the number of events with nonPrompt photons, using the isolatedSF
+    ## Calculate the number of events with nonPrompt photons, using the nonPromptSF
     nonPromptRate = ?
    
     totalRate = (isolatedRate + nonPromptRate)
