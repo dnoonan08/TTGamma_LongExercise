@@ -34,14 +34,14 @@ systematics  = ["nominal",
 results = {}
 
 ## Get data from the input root file
-data = ?
+data = _file.Get(?)
 
 ## Loop over the list of systematics
 for syst in systematics:
     
-    ## Add TopPair and NonTop histograms to the array 'mc'
     ## Create an array 'mc' of histograms from TopPair and NonTop categories
     mc = TObjArray(2)   
+    ## Add TopPair and NonTop histograms to the array 'mc'
     mc.Add(_file.Get(?))
     
     ## Fit the MC histograms to data 
@@ -56,7 +56,7 @@ for syst in systematics:
     if not status==0:
         print (f"Error in fit while processing {syst} sample: exit status {status}")
         
-    ## Get the value of fit parameter and the error for the TopPair MC category: 
+    ## Get the value of fit parameter and its error for the TopPair MC category: 
     topPurity = ?
     topPurityErr = ?
     

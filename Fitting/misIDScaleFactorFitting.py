@@ -34,7 +34,7 @@ systematics  = ["nominal",
 results = {}
 
 ## Get data from the input root file
-data = ?
+data = _file.Get(?)
     
 ## Loop over the list of systematics    
 for syst in systematics:
