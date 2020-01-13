@@ -99,12 +99,16 @@ class TTGammaProcessor(processor.ProcessorABC):
         ### Accumulator for holding histograms
         self._accumulator = processor.dict_accumulator({
             # 3. ADD HISTOGRAMS
-            # book histograms for photon pt, eta, and charged hadron isolation
+            ## book histograms for photon pt, eta, and charged hadron isolation
+            #'photon_pt':
+            #'photon_eta':
+            #'photon_chIso':
 
-            # book histogram for photon/lepton mass in a 3j0t region
+            ## book histogram for photon/lepton mass in a 3j0t region
+            #'photon_lepton_mass_3j0t':
 
-            # book histogram for M3 variable
-
+            ## book histogram for M3 variable
+            #'M3':
 
             'EventCount':processor.value_accumulator(int)
         })
@@ -547,18 +551,17 @@ class TTGammaProcessor(processor.ProcessorABC):
         # EVENT VARIABLES
         ##################
 
-        # PART 2: Uncomment to begin implementing event variables
-        """
+        # PART 2A: Uncomment to begin implementing event variables
+        """        
         # 2. DEFINE VARIABLES
         ## Define M3, mass of 3-jet pair with highest pT
-        # find all possible 3-jet combinations in the events (hint: using the .choose() method of jagged arrays ) 
+        # find all possible combinations of 3 tight jets in the events (hint: using the .p4.choose() method of jagged arrays to do combinations of the TLorentzVectors) 
         triJet = ?
         # calculate
         triJetPt = ?
         triJetMass = ?
         # define the M3 variable, the triJetMass of the combination with the highest triJetPt value (hint: using the .argmax() method)
         M3 = ?
-
 
         leadingPhoton = tightPhotons[:,:1]
         leadingPhotonLoose = loosePhotons[:,:1]
@@ -570,13 +573,19 @@ class TTGammaProcessor(processor.ProcessorABC):
         # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the .cross() method)
         mugammaPairs = ?
         mugammaMass = ?
+        """
         
-        
+        ###################
+        # PHOTON CATEGORIES
+        ###################
+
         # Define photon category for each event
 
         phoCategory = np.ones(df.size)
         phoCategoryLoose = np.ones(df.size)
 
+        # PART 2B: Uncomment to begin implementing photon categorization
+        """
         if not isData:
             #### Photon categories, using genIdx branch of the leading photon in the event
             idx = leadingPhoton.genIdx
@@ -840,6 +849,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         """
         #list of systematics
         systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+
         if not self.jetSyst=='nominal':
             systList=[self.jetSyst]
 
@@ -869,11 +879,10 @@ class TTGammaProcessor(processor.ProcessorABC):
                     lepSel='muSel'
 
                 # 3. GET HISTOGRAM EVENT SELECTION
-                #  use the selection.all() method to select events passing the lepton selection, 4-jet 1-tag jet selection, and either the one-photon, loose-photon or zero-photon selections
+                #  use the selection.all() method to select events passing the lepton selection, 4-jet 1-tag jet selection, and either the one-photon or loose-photon selections
                 #  ex: selection.all( *('LIST', 'OF', 'SELECTION', 'CUTS') )
                 phosel = selection.all( *(???))
                 phoselLoose = selection.all( *(???) )
-                zeroPho = selection.all( *(???) )
 
                 # 3. FILL HISTOGRAMS
                 #    fill photon_pt and photon_eta, using the tightPhotons array, from events passing the phosel selection
