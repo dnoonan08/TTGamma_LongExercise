@@ -432,7 +432,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             #                                       pt_jer_down, mass_jer_down
             #                                       pt_jes_up,   mass_jes_up
             #                                       pt_jes_down, mass_jes_down
-            Jet_transformer.transform(jets, forceStochastic=False)
+            Jet_transformer.transform(jets)
 
             # 4. ADD SYSTEMATICS
             #   If processing a jet systematic (based on value of self.jetSyst variable) update the jet pt and mass to reflect the jet systematic uncertainty variations
@@ -848,7 +848,11 @@ class TTGammaProcessor(processor.ProcessorABC):
         # PART 3: Uncomment to add histograms
         """
         #list of systematics
-        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+        systList = ['nowegiht','nominal']
+
+        # PART 4: SYSTEMATICS
+        # uncomment the full list after systematics have been implemented
+        #systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
 
         if not self.jetSyst=='nominal':
             systList=[self.jetSyst]
@@ -889,31 +893,31 @@ class TTGammaProcessor(processor.ProcessorABC):
                 output['photon_pt'].fill(dataset=dataset,
                                          pt=?,
                                          category=?,
-                                         lepFlavor=?,
-                                         systematic=?,
+                                         lepFlavor=lepton,
+                                         systematic=syst,
                                          weight=?)
     
                 output['photon_eta'].fill(dataset=dataset,
                                          pt=?,
                                          category=?,
-                                         lepFlavor=?,
-                                         systematic=?,
+                                         lepFlavor=lepton,
+                                         systematic=syst,
                                          weight=?)
 
                 #    fill photon_chIso histogram, using the loosePhotons array (photons passing all cuts, except the charged hadron isolation cuts)
                 output['photon_chIso'].fill(dataset=dataset,
                                             chIso=?,
                                             category=?,
-                                            lepFlavor=?,
-                                            systematic=?,
+                                            lepFlavor=lepton,
+                                            systematic=syst,
                                             weight=?)
                 
                 #    fill M3 histogram, for events passing the phosel selection
                 output['M3'].fill(dataset=dataset,
                                   M3=?,
                                   category=?,
-                                  lepFlavor=?,
-                                  systematic=?,
+                                  lepFlavor=lepton,
+                                  systematic=syst,
                                   weight=?)
 
                 
@@ -929,13 +933,13 @@ class TTGammaProcessor(processor.ProcessorABC):
                                                    mass=?,
                                                    category=?
                                                    lepFlavor='electron',
-                                                   systematic=?,
+                                                   systematic=syst,
                                                    weight=?)
             output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
                                                    mass=?,
                                                    category=?,
                                                    lepFlavor='muon',
-                                                   systematic=?,
+                                                   systematic=syst,
                                                    weight=?)
             
         """
