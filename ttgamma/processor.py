@@ -1,13 +1,14 @@
 import time
 
 from coffea import hist, util
-from coffea.analysis_objects import JaggedCandidateArray
+#from coffea.analysis_objects import JaggedCandidateArray
 import coffea.processor as processor
 from coffea.jetmet_tools import FactorizedJetCorrector, JetCorrectionUncertainty, JetTransformer, JetResolution, JetResolutionScaleFactor
+from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from functools import partial
 import uproot
-
-from awkward import JaggedArray
+import awkward1 as ak
+#from awkward import JaggedArray
 import numpy as np
 import pickle
 import sys
@@ -21,8 +22,8 @@ from .utils.efficiencies import getMuSF, getEleSF
 
 from packaging import version
 import coffea
-if (version.parse(coffea.__version__) < version.parse('0.6.22') ):
-    raise Exception('Code requires coffea version 0.6.22 or newer')
+if (version.parse(coffea.__version__) < version.parse('0.6.47') ):
+    raise Exception('Code requires coffea version 0.6.47 or newer')
 
 import os.path
 cwd = os.path.dirname(__file__)
@@ -99,6 +100,10 @@ def maxHistoryPDGID(idxList_contents, idxList_starts, idxList_stops, pdgID_conte
 class TTGammaProcessor(processor.ProcessorABC):
 #     def __init__(self, runNum = -1, eventNum = -1):
     def __init__(self, runNum = -1, eventNum = -1, mcEventYields = None):
+        ################################
+        # INITIALIZE COFFEA PROCESSOR
+        ################################
+
         self.mcEventYields = mcEventYields
 
         dataset_axis = hist.Cat("dataset", "Dataset")
@@ -126,6 +131,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         ###
         self._accumulator = processor.dict_accumulator({
             ##photon histograms
+            'pho_pt': hist.Hist("Counts", dataset_axis, pt_axis),
             'photon_pt': hist.Hist("Counts", dataset_axis, pt_axis, phoCategory_axis, lep_axis, systematic_axis),
             'photon_eta': hist.Hist("Counts", dataset_axis, eta_axis, phoCategory_axis, lep_axis, systematic_axis),
             'photon_chIso': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis, systematic_axis),
@@ -194,134 +200,53 @@ class TTGammaProcessor(processor.ProcessorABC):
     def accumulator(self):
         return self._accumulator
 
-    def process(self, df):
+    def process(self, events):
         output = self.accumulator.identity()
+        output['EventCount'] = len(events)
 
-        datasetFull = df['dataset']
+        datasetFull = events.metadata['dataset']
         dataset=datasetFull.replace('_2016','')
-
         isData = 'Data' in dataset
+        
+        rho = events.fixedGridRhoFastjetAll
 
-        year=2016
-        yearStr="2016"
-        muTrigger = df['HLT_IsoMu24'] | df['HLT_IsoTkMu24']
-        eleTrigger = df['HLT_Ele27_WPTight_Gsf']
-        photonBitMapName = 'Photon_cutBased'
+###To-do list:
+## Fix buggy overlap removal
+## Jet transformer
+## LHE and gen weights
+      
+        """
+        #ARH: Fix jet variables, genJetIdx
+     #       genJetIdx=df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
+     #       ptGenJet=np.zeros_like(df['Jet_pt']), #df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
+      
+    #ARH    events["Jet","hadFlav"] = events.Jet.hadronFlavour if not isData else np.ones_like(events.Jet.jetId)
+    #ARH    events["Jet","ptGenJet"]= np.zeros_like(events.Jet.pt)
 
-        weights = processor.Weights(len(df['event']))
-  
-        #### These are already applied in the skim
-#         filters = (df['Flag_goodVertices'] &
-#                    df['Flag_globalSuperTightHalo2016Filter'] &
-#                    df['Flag_HBHENoiseFilter'] &
-#                    df['Flag_HBHENoiseIsoFilter'] &
-#                    df['Flag_EcalDeadCellTriggerPrimitiveFilter'] &
-#                    df['Flag_BadPFMuonFilter'] 
-#                   )
-#         if year > 2016:
-#             filters = (filters & 
-#                        df['Flag_ecalBadCalibFilterV2']
-#                       )
         
-        
-        rho = df['fixedGridRhoFastjetAll']
-        
-        muons = JaggedCandidateArray.candidatesfromcounts(
-            df['nMuon'],
-            pt=df['Muon_pt'],
-            eta=df['Muon_eta'],
-            phi=df['Muon_phi'],
-            mass=df['Muon_mass'],
-            charge=df['Muon_charge'],
-            relIso=df['Muon_pfRelIso04_all'],
-            tightId=df['Muon_tightId'],
-            isPFcand=df['Muon_isPFcand'],
-            isTracker=df['Muon_isTracker'],
-            isGlobal=df['Muon_isGlobal'],           
-        )
-        
-        electrons = JaggedCandidateArray.candidatesfromcounts(
-            df['nElectron'],
-            pt=df['Electron_pt'],
-            eta=df['Electron_eta'],
-            phi=df['Electron_phi'],
-            mass=df['Electron_mass'],
-            charge=df['Electron_charge'],
-            cutBased=df['Electron_cutBased'],
-            d0=df['Electron_dxy'],
-            dz=df['Electron_dz'],
-        )
-
         if not isData:
-            genJet = JaggedCandidateArray.candidatesfromcounts(
-                df['nGenJet'],
-                pt = df['GenJet_pt'],
-                eta = df['GenJet_eta'],
-                phi = df['GenJet_phi'],
-                mass = df['GenJet_mass'],
-            )
-
-        jets = JaggedCandidateArray.candidatesfromcounts(
-            df['nJet'],
-            pt=df['Jet_pt'],
-            eta=df['Jet_eta'],
-            phi=df['Jet_phi'],
-            mass=df['Jet_mass'],
-            jetId=df['Jet_jetId'],
-            btag=df['Jet_btagDeepB'],
-            area=df['Jet_area'],
-            ptRaw=df['Jet_pt'] * (1-df['Jet_rawFactor']),
-            massRaw=df['Jet_mass'] * (1-df['Jet_rawFactor']),
-            hadFlav=df['Jet_hadronFlavour'] if not isData else np.ones_like(df['Jet_jetId']),
-            genJetIdx=df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
-            ptGenJet=np.zeros_like(df['Jet_pt']), #df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
-        )
-
-        if not isData:
+            #ARH: Not confident the changes below will work
             # fix what seems to be a bug, genJets get skimmed after the genJet matching:
             #   jets matched to a genJet with pt<10 still get assigned a value for Jet_genJetIdx, but that index is not present in the
             #   genJet list because it is cut.  In these cases, set idx to -1
-            jets.genJetIdx[jets.genJetIdx>=genJet.counts] = -1
 
-            jets['ptGenJet'][jets.genJetIdx>-1] = genJet[jets.genJetIdx[jets.genJetIdx>-1]].pt
-            
-            jets['rho'] = jets.pt.ones_like()*rho
+            #ARH might have to use np.where or ak.where or something
+#            events.Jet.genJetIdx[events.Jet.genJetIdx >= ak.num(events.GenJet)] = -1
+#            events.Jet.ptGenJet[events.Jet.genJetIdx>-1] = events.Jet.matched_gen.pt
+ 
+            events["Jets","rho"] = events.Jet.pt.ones_like()*rho
 
             Jet_transformer.transform(jets, forceStochastic=False)
-            
-        photons = JaggedCandidateArray.candidatesfromcounts(
-            df['nPhoton'],
-            pt=df['Photon_pt'],
-            eta=df['Photon_eta'],
-            phi=df['Photon_phi'],
-            mass=np.zeros_like(df['Photon_pt']),
-            isEE=df['Photon_isScEtaEE'],
-            isEB=df['Photon_isScEtaEB'],
-            photonId=df[photonBitMapName],
-            passEleVeto=df['Photon_electronVeto'],
-            pixelSeed=df['Photon_pixelSeed'],
-            sieie=df['Photon_sieie'],
-            chIso=df['Photon_pfRelIso03_chg']*df['Photon_pt'],
-            vidCuts=df['Photon_vidNestedWPBitmap'],
-            genFlav=df['Photon_genPartFlav'] if not isData else np.ones_like(df['Photon_electronVeto']),
-            genIdx=df['Photon_genPartIdx'] if not isData else np.ones_like(df['Photon_electronVeto']),
-        )
 
+        # *** ARH: tried to fix these variables; see if it worked
+        chIso=df['Photon_pfRelIso03_chg']*df['Photon_pt']
+        events["Photon","genFlav"]=events.Photon.genPartFlav if not isData else np.ones_like(events.Photon.electronVeto)
+        events["Photon","genIdx"] =events.Photon.genPartIdx  if not isData else np.ones_like(events.Photon.electronVeto)
+        # *** 
+        
         if not isData:
-            genPart = JaggedCandidateArray.candidatesfromcounts(
-                df['nGenPart'],
-                pt=df['GenPart_pt'],
-                eta=df['GenPart_eta'],
-                phi=df['GenPart_phi'],
-                mass=df['GenPart_mass'],
-                pdgid=df['GenPart_pdgId'],
-                motherIdx=df['GenPart_genPartIdxMother'],
-                status=df['GenPart_status'],
-                statusFlags=df['GenPart_statusFlags'],
-            )
-
-            genmotherIdx = genPart.motherIdx
-            genpdgid = genPart.pdgid
+            genmotherIdx = events.GenPart.genPartIdxMother
+            genpdgid = events.GenPart.pdgId
             hasWeights=True
 
             try:
@@ -364,9 +289,25 @@ class TTGammaProcessor(processor.ProcessorABC):
                     PSWeights = PSWeights * LHEWeight_originalXWGTUP / generatorWeight
             except:
                 hasWeights=False
+        """
+        #ARH probably buggy, because phi might not be in range of [-pi, pi]
+        def dR(one,two):
+            pairs = ak.cartesian({"i0":one,"i1":two},nested=True)
+            diffPhi = abs(pairs.i0.phi - pairs.i1.phi)
+            diffEta = abs(pairs.i0.eta - pairs.i1.eta)
+            return np.sqrt(diffPhi*diffPhi + diffEta*diffEta)
 
-            
-        ## TTbar vs TTGamma Overlap Removal (work in progress, still buggy)
+
+
+        #################
+        # OVERLAP REMOVAL
+        #################
+        # Overlap removal between related samples
+        # TTGamma and TTbar
+        # WGamma and WJets
+        # ZGamma and ZJets
+        # We need to remove events from TTbar which are already counted in the phase space in which the TTGamma sample is produced
+        # photon with pT> 10 GeV, eta<5, and at least dR>0.1 from other gen objects 
         doOverlapRemoval = False
         if 'TTbar' in dataset:
             doOverlapRemoval = True
@@ -386,123 +327,143 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             
         if doOverlapRemoval:
-            overlapPhoSelect = ((genPart.pt>=overlapPt) & 
-                                (abs(genPart.eta) < overlapEta) & 
-                                (genPart.pdgid==22) & 
-                                (genPart.status==1)
+            genmotherIdx = events.GenPart.genPartIdxMother
+            genpdgid = events.GenPart.pdgId
+
+            overlapPhoSelect = ((events.GenPart.pt>=overlapPt) & 
+                                (abs(events.GenPart.eta) < overlapEta) & 
+                                (events.GenPart.pdgId==22) & 
+                                (events.GenPart.status==1)
                                )
-            
-            OverlapPhotons = genPart[overlapPhoSelect] 
+            #potential overlap photons are only those passing the kinematic cuts
+            OverlapPhotons = events.GenPart[overlapPhoSelect] 
 
-            idx = OverlapPhotons.motherIdx
-            maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-                                        genpdgid.content, genpdgid.starts, genpdgid.stops, 
-                                        genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-            
-            isNonPrompt = (maxParent>37).any()
+            #if the overlap photon is actually from a non prompt decay, it's not part of the phase space of the separate sample
+           #ARH idx = OverlapPhotons.genPartIdxMother
+            #ARH fix this: maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
+            #                            genpdgid.content, genpdgid.starts, genpdgid.stops, 
+            #                            genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
+           
+            finalGen = events.GenPart[((events.GenPart.status==1)|(events.GenPart.status==71)) & 
+                                      ~((abs(events.GenPart.pdgId)==12) | (abs(events.GenPart.pdgId)==14) | (abs(events.GenPart.pdgId)==16))]
 
-            finalGen = genPart[((genPart.status==1)|(genPart.status==71)) & ~((abs(genPart.pdgid)==12) | (abs(genPart.pdgid)==14) | (abs(genPart.pdgid)==16))]
+#            genPairs = ak.cartesian({"pho":OverlapPhotons,"gen":finalGen},nested=True)
+#ARH: need to remove cases where the cross product is the gen photon with itself            genPairs = genPairs[~(genPairs.pho == genPairs.gen)]
+#            dRPairs  = genPairs.pho.delta_r(genPairs.gen)
 
-            genPairs = OverlapPhotons['p4'].cross(finalGen['p4'],nested=True)
+            dRPairs = dR(OverlapPhotons,finalGen)
+#            genPairs = OverlapPhotons['p4'].cross(finalGen['p4'],nested=True)
             ##remove the case where the cross produce is the gen photon with itself
-            genPairs = genPairs[~(genPairs.i0==genPairs.i1)]
+#            genPairs = genPairs[~(genPairs.i0==genPairs.i1)]
+#            #find closest gen particle to overlap photons
+#            dRPairs = genPairs.i0.delta_r(genPairs.i1)
 
-            dRPairs = genPairs.i0.delta_r(genPairs.i1)
-            
-            isOverlap = ((dRPairs.min()>overlapDR) & (maxParent<37)).any()
+
+            #the event is overlapping with the separate sample if there is an overlap photon passing the dR cut and not coming from hadronic activity
+            isOverlap = ak.any(( (ak.min(dRPairs,axis=-1)>overlapDR)  ), axis=-1)
+            #ARH isOverlap = ak.any(( (ak.min(dRPairs,axis=-1)>overlapDR) & maxParent>37  ), axis=-1)
+#((dRPairs.min()>overlapDR) & (maxParent<37)).any()
             passOverlapRemoval = ~isOverlap
+
         else:
-            passOverlapRemoval = np.ones_like(df['event'])==1
+            passOverlapRemoval = np.ones_like(len(events))==1
             
-
-
         
-        muonSelectTight = ((muons.pt>30) & 
-                           (abs(muons.eta)<2.4) & 
-                           (muons.tightId) & 
-                           (muons.relIso < 0.15)
+        ##################
+        # OBJECT SELECTION
+        ##################
+         # PART 1A Uncomment to add in object selection
+         
+        # 1. ADD SELECTION
+
+        #select tight muons
+        # tight muons should have a pt of at least 30 GeV, |eta| < 2.4, pass the tight muon ID cut (tightID variable), and have a relative isolation of less than 0.15
+        muonSelectTight = ((events.Muon.pt>30) & 
+                           (abs(events.Muon.eta)<2.4) & 
+                           (events.Muon.tightId) & 
+                           (events.Muon.pfRelIso04_all < 0.15)
                           )
-        
-        muonSelectLoose = ((muons.pt>15) & 
-                           (abs(muons.eta)<2.4) & 
-                           ((muons.isPFcand) & (muons.isTracker | muons.isGlobal)) & 
-                           (muons.relIso < 0.25) &
+
+        #select loose muons        
+        muonSelectLoose = ((events.Muon.pt>15) & 
+                           (abs(events.Muon.eta)<2.4) & 
+                           ((events.Muon.isPFcand) & (events.Muon.isTracker | events.Muon.isGlobal)) & 
+                           (events.Muon.pfRelIso04_all < 0.25) &
                            np.invert(muonSelectTight)
                           )
 
-        eleEtaGap = (abs(electrons.eta) < 1.4442) | (abs(electrons.eta) > 1.566)
-        elePassD0 = ((abs(electrons.eta) < 1.479) & (abs(electrons.d0) < 0.05) |
-                     (abs(electrons.eta) > 1.479)  & (abs(electrons.d0) < 0.1)
+        #define electron cuts
+        eleEtaGap = (abs(events.Electron.eta) < 1.4442) | (abs(events.Electron.eta) > 1.566)
+        elePassDXY = ((abs(events.Electron.eta) < 1.479) & (abs(events.Electron.dxy) < 0.05) |
+                     (abs(events.Electron.eta) > 1.479)  & (abs(events.Electron.dxy) < 0.1)
                     )
-        elePassDZ = ((abs(electrons.eta) < 1.479) & (abs(electrons.dz) < 0.1) |
-                     (abs(electrons.eta) > 1.479)  & (abs(electrons.dz) < 0.2)
+        elePassDZ = ((abs(events.Electron.eta) < 1.479) & (abs(events.Electron.dz) < 0.1) |
+                     (abs(events.Electron.eta) > 1.479)  & (abs(events.Electron.dz) < 0.2)
                     )
 
         
-        
-        electronSelectTight = ((electrons.pt>35) & 
-                               (abs(electrons.eta)<2.1) & 
+        #select tight electrons
+        # 1. ADD SELECTION
+        #select tight electrons
+        # tight electrons should have a pt of at least 35 GeV, |eta| < 2.1, pass the cut based electron id (cutBased variable in NanoAOD>=4), and pass the etaGap, D0, and DZ cuts defined above
+        electronSelectTight = ((events.Electron.pt>35) & 
+                               (abs(events.Electron.eta)<2.1) & 
                                eleEtaGap &      
-                               (electrons.cutBased>=4) &
-                               elePassD0 & 
+                               (events.Electron.cutBased>=4) &
+                               elePassDXY & 
                                elePassDZ
                               )
 
-        electronSelectLoose = ((electrons.pt>15) & 
-                               (abs(electrons.eta)<2.4) & 
+        #select loose electrons
+        electronSelectLoose = ((events.Electron.pt>15) & 
+                               (abs(events.Electron.eta)<2.4) & 
                                eleEtaGap &      
-                               (electrons.cutBased>=1) &
-                               elePassD0 & 
+                               (events.Electron.cutBased>=1) &
+                               elePassDXY & 
                                elePassDZ & 
                                np.invert(electronSelectTight)
                               )
         
-        tightMuon = muons[muonSelectTight]
-        looseMuon = muons[muonSelectLoose]
+        # 1. ADD SELECTION
+        #  Object selection
+        #select the subset of muons passing the muonSelectTight and muonSelectLoose cuts
+        tightMuon = events.Muon[muonSelectTight]
+        looseMuon = events.Muon[muonSelectLoose]
         
-        tightElectron = electrons[electronSelectTight]
-        looseElectron = electrons[electronSelectLoose]
+        # 1. ADD SELECTION
+        #  Object selection
+        #select the subset of electrons passing the electronSelectTight and electronSelectLoose cuts
+        tightElectron = events.Electron[electronSelectTight]
+        looseElectron = events.Electron[electronSelectLoose]
 
+        #### Calculate deltaR between photon and nearest lepton 
+        phoMu = dR(events.Photon, tightMuon)
+        dRphomu = ak.all(phoMu>0.4, axis=-1) | (ak.num(tightMuon)==0)  
+        
+        phoEle = dR(events.Photon, tightElectron)
+        dRphoele = ak.all(phoEle>0.4, axis=-1) | (ak.num(tightElectron)==0)
 
-        
-        oneMuon = (tightMuon.counts == 1)
-        muVeto = (tightMuon.counts == 0)
-        oneEle = (tightElectron.counts == 1)
-        eleVeto = (tightElectron.counts == 0)
-        looseMuonSel = (looseMuon.counts == 0)
-        looseElectronSel = (looseElectron.counts == 0)
-
-        
-        #### Calculate deltaR between photon and nearest muon
-        ####### make combination pairs
-        phoMu = photons['p4'].cross(tightMuon['p4'],nested=True)
-        
-        ####### check delta R of each combination, if min is >0.1 it is okay, or if there are no tight muons it passes
-        dRphomu = (phoMu.i0.delta_r(phoMu.i1)>0.4).all() | (tightMuon.counts==0)
-        phoEle = photons['p4'].cross(tightElectron['p4'],nested=True)
-        dRphoele = ((phoEle.i0.delta_r(phoEle.i1)).min()>0.4) | (tightElectron.counts==0)
-        
         #photon selection (no ID requirement used here)
-        photonSelect = ((photons.pt>20) & 
-                        (abs(photons.eta) < 1.4442) &
-                        (photons.isEE | photons.isEB) &
-                        (photons.passEleVeto) & 
-                        np.invert(photons.pixelSeed) & 
+        photonSelect = ((events.Photon.pt>20) & 
+                        (abs(events.Photon.eta) < 1.4442) &
+                        (events.Photon.isScEtaEE | events.Photon.isScEtaEB) &
+                        (events.Photon.electronVeto) & 
+                        np.invert(events.Photon.pixelSeed) & 
                         dRphomu & dRphoele
                        )
         
-        
+
         #split out the ID requirement, enabling Iso and SIEIE to be inverted for control regions
-        photonID = photons.photonId >= 2
+        photonID = events.Photon.cutBased >= 2
 
         #parse VID cuts, define loose photons (not used yet)
-        photon_MinPtCut = (photons.vidCuts>>0 & 3)>=2 
-        photon_PhoSCEtaMultiRangeCut = (photons.vidCuts>>2 & 3)>=2 
-        photon_PhoSingleTowerHadOverEmCut = (photons.vidCuts>>4 & 3)>=2  
-        photon_PhoFull5x5SigmaIEtaIEtaCut = (photons.vidCuts>>6 & 3)>=2  
-        photon_ChIsoCut = (photons.vidCuts>>8 & 3)>=2  
-        photon_NeuIsoCut = (photons.vidCuts>>10 & 3)>=2  
-        photon_PhoIsoCut = (photons.vidCuts>>12 & 3)>=2  
+        photon_MinPtCut = (events.Photon.vidNestedWPBitmap>>0 & 3)>=2 
+        photon_PhoSCEtaMultiRangeCut = (events.Photon.vidNestedWPBitmap>>2 & 3)>=2 
+        photon_PhoSingleTowerHadOverEmCut = (events.Photon.vidNestedWPBitmap>>4 & 3)>=2  
+        photon_PhoFull5x5SigmaIEtaIEtaCut = (events.Photon.vidNestedWPBitmap>>6 & 3)>=2  
+        photon_ChIsoCut = (events.Photon.vidNestedWPBitmap>>8 & 3)>=2  
+        photon_NeuIsoCut = (events.Photon.vidNestedWPBitmap>>10 & 3)>=2  
+        photon_PhoIsoCut = (events.Photon.vidNestedWPBitmap>>12 & 3)>=2  
         
         photonID_NoChIsoSIEIE = (photon_MinPtCut & 
                                  photon_PhoSCEtaMultiRangeCut & 
@@ -511,100 +472,184 @@ class TTGammaProcessor(processor.ProcessorABC):
                                  photon_NeuIsoCut & 
                                  photon_PhoIsoCut)
 
-        
-        tightPhotons = photons[photonSelect & photonID]
-        loosePhotons = photons[photonSelect & photonID_NoChIsoSIEIE & photon_PhoFull5x5SigmaIEtaIEtaCut]
-        loosePhotonsSideband = photons[photonSelect & photonID_NoChIsoSIEIE & (photons.sieie>0.012)]
-        
-        ##medium jet ID cut
-        jetIDbit = 1
-        if year>2016: jetIDbit=2
+        # 1. ADD SELECTION
+        #  Object selection
+        #select tightPhotons, the subset of photons passing the photonSelect cut and the photonID cut        
+        tightPhotons = events.Photon[photonSelect & photonID]
+        #select loosePhotons, the subset of photons passing the photonSelect cut and all photonID cuts without the charged hadron isolation cut applied
+        loosePhotons = events.Photon[photonSelect & photonID_NoChIsoSIEIE & photon_PhoFull5x5SigmaIEtaIEtaCut]
+
+        #ARH: not sure if this is used
+        loosePhotonsSideband = events.Photon[photonSelect & photonID_NoChIsoSIEIE & (events.Photon.sieie>0.012)]
+
+
+        #ARH ADD JET TRANSFORMER HERE!
 
         ##check dR jet,lepton & jet,photon
-        jetMu = jets['p4'].cross(tightMuon['p4'],nested=True)
-        dRjetmu = ((jetMu.i0.delta_r(jetMu.i1)).min()>0.4) | (tightMuon.counts==0)
+        jetMu = dR(events.Jet,tightMuon)
+        dRjetmu = ak.all(jetMu>0.4,axis=-1) | (ak.num(tightMuon)==0)
 
-        jetEle = jets['p4'].cross(tightElectron['p4'],nested=True)
-        dRjetele = ((jetEle.i0.delta_r(jetEle.i1)).min()>0.4) | (tightElectron.counts==0)
+        jetEle = dR(events.Jet,tightElectron)
+        dRjetele = ak.all(jetEle>0.4,axis=-1) | (ak.num(tightElectron)==0)
 
-        jetPho = jets['p4'].cross(tightPhotons['p4'],nested=True)
-        dRjetpho = ((jetPho.i0.delta_r(jetPho.i1)).min()>0.1) | (tightPhotons.counts==0)
-        
-        jetSelectNoPt = ((abs(jets.eta) < 2.4) &
-                         ((jets.jetId >> jetIDbit & 1)==1) &
+        jetPho = dR(events.Jet,tightPhotons)
+        dRjetpho = ak.all(jetPho>0.4,axis=-1) | (ak.num(tightPhotons)==0)
+
+        # 1. ADD SELECTION
+        #select good jets
+        # jetsshould have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above (dRjetmu, dRjetele, dRjetpho)
+        ##medium jet ID cut                                                                                                                                            
+        jetIDbit = 1
+
+        jetSelectNoPt = ((abs(events.Jet.eta) < 2.4) &
+                         ((events.Jet.jetId >> jetIDbit & 1)==1) &
                          dRjetmu & dRjetele & dRjetpho )
         
-        jetSelect = jetSelectNoPt & (jets.pt > 30)
+        jetSelect = jetSelectNoPt & (events.Jet.pt > 30)
 
-        if not isData:
-            jetSelect_JESUp = jetSelectNoPt & (jets.pt_jes_up > 30)
-            jetSelect_JESDown = jetSelectNoPt & (jets.pt_jes_down > 30)
-            
-            jetSelect_JERUp = jetSelectNoPt & (jets.pt_jer_up > 30)
-            jetSelect_JERDown = jetSelectNoPt & (jets.pt_jer_down > 30)
-
-        tightJets = jets[jetSelect]
-        if not isData:
-            tightJets_JERUp = jets[jetSelect_JERUp]
-            tightJets_JERDown = jets[jetSelect_JERDown]
-            tightJets_JESUp = jets[jetSelect_JESUp]
-            tightJets_JESDown = jets[jetSelect_JESDown]
-        
+        # 1. ADD SELECTION
+        #select the subset of jets passing the jetSelect cuts
+        tightJets = events.Jet[jetSelect]                                                                                                                             
+    
+        # 1. ADD SELECTION
+        # select the subset of tightJets which pass the Deep CSV tagger
         bTagWP = 0.6321   #2016 DeepCSV working point
-
-        btagged = tightJets.btag>bTagWP
-
-        # bJets = tightJets[btagged]
-
-        # # print (tightJets.btag>bTagWP)
-        # # print ((tightJets.btag>bTagWP).sum())
-        # print (((tightJets.btag>bTagWP).sum()==bJets.counts).all())
+        btagged = events.Jet.btagDeepB>bTagWP  
+        bTaggedJets= events.Jet[jetSelect & btagged]
 
 
-        ## Define M3, mass of 3-jet pair with highest pT
-        triJet = tightJets['p4'].choose(3)
-        triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-        triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-        M3 = triJetMass[triJetPt.argmax()]
+        #####################
+        # EVENT SELECTION
+        #####################
+        ### PART 1B: Uncomment to add event selection
+        # 1. ADD SELECTION
+        ## apply triggers
+        # muon events should be triggered by either the HLT_IsoMu24 or HLT_IsoTkMu24 triggers
+        # electron events should be triggered by HLT_Ele27_WPTight_Gsf trigger
+        # HINT: trigger values can be accessed with the variable events.HLT.TRIGGERNAME, 
+        # the bitwise or operator can be used to select multiple triggers events.HLT.TRIGGER1 | events.HLT.TRIGGER2
+        muTrigger  = events.HLT.IsoMu24 | events.HLT.IsoTkMu24
+        eleTrigger = events.HLT.Ele27_WPTight_Gsf
 
-        if not isData:
-            triJet = tightJets_JESUp['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JESUp = triJetMass[triJetPt.argmax()]
-            
-            triJet = tightJets_JESDown['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JESDown = triJetMass[triJetPt.argmax()]
-            
-            triJet = tightJets_JERUp['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JERUp = triJetMass[triJetPt.argmax()]
-            
-            triJet = tightJets_JERDown['p4'].choose(3)
-            triJetPt = (triJet.i0 + triJet.i1 + triJet.i2).pt
-            triJetMass = (triJet.i0 + triJet.i1 + triJet.i2).mass
-            M3_JERDown = triJetMass[triJetPt.argmax()]
-
-
-        leadingMuon = tightMuon[::1] 
-        leadingElectron = tightElectron[::1]        
+        # 1. ADD SELECTION
+        #  Event selection
+        #oneMuon, should be true if there is exactly one tight muon in the event 
+        # (hint, the ak.num() method returns the number of objects in each row of a jagged array)
+        oneMuon = (ak.num(tightMuon) == 1)
+        #muVeto, should be true if there are no tight muons in the event
+        muVeto  = (ak.num(tightMuon) == 0)
         
+        # 1. ADD SELECTION
+        #  Event selection
+ 
+        #oneEle should be true if there is exactly one tight electron in the event
+        oneEle  = (ak.num(tightElectron) == 1)
+    
+        #eleVeto should be true if there are no tight electrons in the event
+        eleVeto = (ak.num(tightElectron) == 0)
+
+        # 1. ADD SELECTION
+        #  Event selection
+        #looseMuonVeto and looseElectronVeto should be true if there are 0 loose muons or electrons in the event
+        looseMuonVeto = (ak.num(looseMuon) == 0)
+        looseElectronVeto = (ak.num(looseElectron) == 0)
+
+        # 1. ADD SELECTION
+        # muon selection, requires events to pass:   muon trigger
+        #                                            overlap removal
+        #                                            have exactly one muon
+        #                                            have no electrons
+        #                                            have no loose muons
+        #                                            have no loose electrons
+        #ARH uncomment passOverlapRemoval
+        muon_eventSelection = (muTrigger & #passOverlapRemoval & 
+                               oneMuon & eleVeto & 
+                               looseMuonVeto & looseElectronVeto) 
+
+        # electron selection, requires events to pass:   electron trigger
+        #                                                overlap removal
+        #                                                have exactly one electron
+        #                                                have no muons
+        #                                                have no loose muons
+        #                                                have no loose electrons
+        #ARH uncomment passOverlapRemoval 
+        electron_eventSelection = (eleTrigger & #passOverlapRemoval &
+                                   oneEle & muVeto & 
+                                   looseMuonVeto & looseElectronVeto)  
+
+        # 1. ADD SELECTION
+        #add selection 'eleSel', for events passing the electron event selection, and muSel for those passing the muon event selection
+        #  ex: selection.add('testSelection', array_of_booleans)
+    
+        #create a selection object
+        selection = processor.PackedSelection()
+
+        selection.add('eleSel',ak.to_numpy(electron_eventSelection))
+        selection.add('muSel',ak.to_numpy(muon_eventSelection))
+
+        #add two jet selection criteria
+        #   First, 'jetSel' which selects events with at least 4 tightJets and at least one bTaggedJets
+        nJets = 4
+        selection.add('jetSel',     ak.to_numpy( (ak.num(tightJets) >= nJets) & (ak.num(bTaggedJets) >= 1) ))
+        #   Second, 'jetSel_3j0t' which selects events with at least 3 tightJets and exactly zero bTaggedJets
+        selection.add('jetSel_3j0t', ak.to_numpy((ak.num(tightJets) >= 3)     & (ak.num(bTaggedJets) == 0) ))
+
+        # add selection for events with exactly 0 tight photons
+        selection.add('zeroPho', ak.to_numpy(ak.num(tightPhotons) == 0))
+
+        # add selection for events with exactly 1 tight photon
+        selection.add('onePho',  ak.to_numpy(ak.num(tightPhotons) == 1))
+
+        # add selection for events with exactly 1 loose photon
+        selection.add('loosePho',ak.to_numpy(ak.num(loosePhotons) == 1))
+
+        #ARH not sure we use this anymore
+        #add selection for events with exactly 1 loose photon from the sideband
+        selection.add('loosePhoSideband', ak.to_numpy(ak.num(loosePhotonsSideband) == 1))
+
+        ##################
+        # EVENT VARIABLES
+        ##################
+
+        # PART 2A: Uncomment to begin implementing event variables
+        # 2. DEFINE VARIABLES
+        ## Define M3, mass of 3-jet pair with highest pT
+        # find all possible combinations of 3 tight jets in the events 
+        #hint: using the ak.combinations(array,n) method chooses n unique items from array. Use the "fields" option to define keys you can use to access the items
+        triJet=ak.combinations(tightJets,3,fields=["first","second","third"])
+        triJetPt = (triJet.first + triJet.second + triJet.third).pt
+        triJetMass = (triJet.first + triJet.second + triJet.third).mass
+        M3 = triJetMass[ak.argmax(triJetPt,axis=-1)]
+
+        leadingMuon = tightMuon[::1]
+        leadingElectron = tightElectron[::1]
+
         leadingPhoton = tightPhotons[:,:1]
         leadingPhotonLoose = loosePhotons[:,:1]
         leadingPhotonSideband = loosePhotonsSideband[:,:1]
 
-        
-#        egammaMass = (leadingElectron['p4'] + leadingPhoton['p4']).mass
+        # 2. DEFINE VARIABLES
+        # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the .cross() method)
+        egammaPairs = ak.cartesian({"i0":tightElectron,"i1":leadingPhoton},nested=True)
+        #ARH can't figure this one out yet
+        """
+        egammaMass  = ?
+        # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the .cross() method)
+        mugammaPairs = ?
+        mugammaMass = ?
         egamma = leadingElectron['p4'].cross(leadingPhoton['p4'])
         mugamma = leadingMuon['p4'].cross(leadingPhoton['p4'])
         egammaMass = (egamma.i0 + egamma.i1).mass
         mugammaMass = (mugamma.i0 + mugamma.i1).mass
-        
-        
-        
+        """
+
+        ###################
+        # PHOTON CATEGORIES
+        ###################
+
+        #ARH: this is how far I got pre-Christmas
+        # Define photon category for each event
+        """
         if not isData:
             #### Photon categories, using genIdx branch
             # reco photons really generated as electrons
@@ -621,7 +666,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             isGenPho = matchedPho & ~hadronicParent
             isHadPho = matchedPho & hadronicParent
-            isHadFake = ~(isMisIDele | isGenPho | isHadPho) & (leadingPhoton.counts==1)
+            isHadFake = ~(isMisIDele | isGenPho | isHadPho) & (ak.num(leadingPhoton)==1)
             
             #define integer definition for the photon category axis
             phoCategory = 1*isGenPho + 2*isMisIDele + 3*isHadPho + 4*isHadFake
@@ -641,7 +686,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             isGenPhoLoose = matchedPhoLoose & ~hadronicParent
             isHadPhoLoose = matchedPhoLoose & hadronicParent
-            isHadFakeLoose = ~(isMisIDeleLoose | isGenPhoLoose | isHadPhoLoose) & (leadingPhotonLoose.counts==1)        
+            isHadFakeLoose = ~(isMisIDeleLoose | isGenPhoLoose | isHadPhoLoose) & (ak.num(leadingPhotonLoose)==1)        
 
             #define integer definition for the photon category axis
             phoCategoryLoose = 1*isGenPhoLoose + 2*isMisIDeleLoose + 3*isHadPhoLoose + 4*isHadFakeLoose
@@ -661,7 +706,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             isGenPhoSideband = matchedPhoSideband & ~hadronicParent
             isHadPhoSideband = matchedPhoSideband & hadronicParent
-            isHadFakeSideband = ~(isMisIDeleSideband | isGenPhoSideband | isHadPhoSideband) & (leadingPhotonSideband.counts==1)        
+            isHadFakeSideband = ~(isMisIDeleSideband | isGenPhoSideband | isHadPhoSideband) & (ak.num(leadingPhotonSideband)==1)        
 
             #define integer definition for the photon category axis
             phoCategorySideband = 1*isGenPhoSideband + 2*isMisIDeleSideband + 3*isHadPhoSideband + 4*isHadFakeSideband            
@@ -670,44 +715,28 @@ class TTGammaProcessor(processor.ProcessorABC):
             phoCategoryLoose = np.ones(df.size)
             phoCategorySideband = np.ones(df.size)
         
-
-        mu_noLoose = (muTrigger & passOverlapRemoval &
-                      oneMuon & eleVeto &
-                      looseMuonSel & looseElectronSel)
-        ele_noLoose = (eleTrigger & passOverlapRemoval &
-                       oneEle & muVeto &
-                       looseMuonSel & looseElectronSel)
-
-        # lep_noLoose = mu_noLoose| ele_noLoose
-        
-        selection = processor.PackedSelection()
-        selection.add('eleSel',ele_noLoose)
-        selection.add('muSel',mu_noLoose)
-
-        nJets = 4
-
-        selection.add('jetSel', (tightJets.counts >= nJets) & ((tightJets.btag>bTagWP).sum() >= 1) )
-        selection.add('jetSel_3j0t', (tightJets.counts >= 3) & ((tightJets.btag>bTagWP).sum() == 0) )
-
         if not isData:
-            selection.add('jetSel_JERUp', (tightJets_JERUp.counts >= nJets) & ((tightJets_JERUp.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERUp_3j0t', (tightJets_JERUp.counts >= 3) & ((tightJets_JERUp.btag>bTagWP).sum() == 0) )
+            selection.add('jetSel_JERUp', (ak.num(tightJets_JERUp) >= nJets) & ((tightJets_JERUp.btagDeepB>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JERUp_3j0t', (ak.num(tightJets_JERUp) >= 3) & ((tightJets_JERUp.btagDeepB>bTagWP).sum() == 0) )
             
-            selection.add('jetSel_JERDown', (tightJets_JERDown.counts >= nJets) & ((tightJets_JERDown.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERDown_3j0t', (tightJets_JERDown.counts >= 3) & ((tightJets_JERDown.btag>bTagWP).sum() == 0) )
+            selection.add('jetSel_JERDown', (ak.num(tightJets_JERDown) >= nJets) & ((tightJets_JERDown.btagDeepB>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JERDown_3j0t', (ak.num(tightJets_JERDown) >= 3) & ((tightJets_JERDown.btagDeepB>bTagWP).sum() == 0) )
             
-            selection.add('jetSel_JESUp', (tightJets_JESUp.counts >= nJets) & ((tightJets_JESUp.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESUp_3j0t', (tightJets_JESUp.counts >= 3) & ((tightJets_JESUp.btag>bTagWP).sum() == 0) )
+            selection.add('jetSel_JESUp', (ak.num(tightJets_JESUp) >= nJets) & ((tightJets_JESUp.btagDeepB>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JESUp_3j0t', (ak.num(tightJets_JESUp) >= 3) & ((tightJets_JESUp.btagDeepB>bTagWP).sum() == 0) )
             
-            selection.add('jetSel_JESDown', (tightJets_JESDown.counts >= nJets) & ((tightJets_JESDown.btag>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESDown_3j0t', (tightJets_JESDown.counts >= 3) & ((tightJets_JESDown.btag>bTagWP).sum() == 0) )
+            selection.add('jetSel_JESDown', (ak.num(tightJets_JESDown) >= nJets) & ((tightJets_JESDown.btagDeepB>bTagWP).sum() >= 1) )
+            selection.add('jetSel_JESDown_3j0t', (ak.num(tightJets_JESDown) >= 3) & ((tightJets_JESDown.btagDeepB>bTagWP).sum() == 0) )
 
-        selection.add('zeroPho', tightPhotons.counts == 0)
-        selection.add('onePho', tightPhotons.counts == 1)
-        selection.add('loosePho', loosePhotons.counts == 1)
-        selection.add('loosePhoSideband', loosePhotonsSideband.counts == 1)
+        """
+        ################
+        # EVENT WEIGHTS
+        ################
 
-        
+        #create a processor Weights object, with the same length as the number of events in the chunk
+        weights = processor.Weights(len(events))
+  
+        """
 #        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
         if not 'Data' in dataset:
             lumiWeight = np.ones(df.size)
@@ -730,17 +759,17 @@ class TTGammaProcessor(processor.ProcessorABC):
             #name / working Point / type / systematic / jetType
             #  ... / 0-loose 1-medium 2-tight / comb,mujets,iterativefit / central,up,down / 0-b 1-c 2-udcsg 
 
-            bJetSF_b = self.evaluator['btag%iDeepCSV_1_comb_central_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btag)
-            bJetSF_c = self.evaluator['btag%iDeepCSV_1_comb_central_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btag)
-            bJetSF_udcsg = self.evaluator['btag%iDeepCSV_1_incl_central_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btag)
+            bJetSF_b = self.evaluator['btag%iDeepCSV_1_comb_central_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btagDeepB)
+            bJetSF_c = self.evaluator['btag%iDeepCSV_1_comb_central_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btagDeepB)
+            bJetSF_udcsg = self.evaluator['btag%iDeepCSV_1_incl_central_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btagDeepB)
 
-            bJetSF_b_up = self.evaluator['btag%iDeepCSV_1_comb_up_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btag)
-            bJetSF_c_up = self.evaluator['btag%iDeepCSV_1_comb_up_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btag)
-            bJetSF_udcsg_up = self.evaluator['btag%iDeepCSV_1_incl_up_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btag)
+            bJetSF_b_up = self.evaluator['btag%iDeepCSV_1_comb_up_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btagDeepB)
+            bJetSF_c_up = self.evaluator['btag%iDeepCSV_1_comb_up_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btagDeepB)
+            bJetSF_udcsg_up = self.evaluator['btag%iDeepCSV_1_incl_up_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btagDeepB)
 
-            bJetSF_b_down = self.evaluator['btag%iDeepCSV_1_comb_down_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btag)
-            bJetSF_c_down = self.evaluator['btag%iDeepCSV_1_comb_down_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btag)
-            bJetSF_udcsg_down = self.evaluator['btag%iDeepCSV_1_incl_down_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btag)
+            bJetSF_b_down = self.evaluator['btag%iDeepCSV_1_comb_down_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btagDeepB)
+            bJetSF_c_down = self.evaluator['btag%iDeepCSV_1_comb_down_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btagDeepB)
+            bJetSF_udcsg_down = self.evaluator['btag%iDeepCSV_1_incl_down_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btagDeepB)
 
             bJetSF = JaggedArray(content = np.ones_like(tightJets.pt.content,dtype=np.float64), starts = tightJets.starts, stops = tightJets.stops)
             bJetSF.content[(tightJets.hadFlav==5).content] = bJetSF_b.content
@@ -778,12 +807,12 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             ##probability is the product of all efficiencies of tagged jets, times product of 1-eff for all untagged jets
             ## https://twiki.cern.ch/twiki/bin/view/CMS/BTagSFMethods#1a_Event_reweighting_using_scale
-            pMC   = btagEfficiencies[btagged].prod()     * (1.-btagEfficiencies[np.invert(btagged)]).prod() 
-            pData = btagEfficienciesData[btagged].prod() * (1.-btagEfficienciesData[np.invert(btagged)]).prod()
-            pData_b_up = btagEfficienciesData_b_up[btagged].prod() * (1.-btagEfficienciesData_b_up[np.invert(btagged)]).prod()
-            pData_b_down = btagEfficienciesData_b_down[btagged].prod() * (1.-btagEfficienciesData_b_down[np.invert(btagged)]).prod()
-            pData_l_up = btagEfficienciesData_l_up[btagged].prod() * (1.-btagEfficienciesData_l_up[np.invert(btagged)]).prod()
-            pData_l_down = btagEfficienciesData_l_down[btagged].prod() * (1.-btagEfficienciesData_l_down[np.invert(btagged)]).prod()
+            pMC          = ak.prod(btagEfficiencies[btagged], axis=-1)           * ak.prod((1.-btagEfficiencies[np.invert(btagged)]), axis=-1) 
+            pData        = ak.prod(btagEfficienciesData[btagged], axis=-1)       * ak.prod((1.-btagEfficienciesData[np.invert(btagged)]),axis=-1)
+            pData_b_up   = ak.prod(btagEfficienciesData_b_up[btagged], axis=-1)  * ak.prod((1.-btagEfficienciesData_b_up[np.invert(btagged)]),axis=-1)
+            pData_b_down = ak.prod(btagEfficienciesData_b_down[btagged],axis=-1) * ak.prod((1.-btagEfficienciesData_b_down[np.invert(btagged)]),axis=-1)
+            pData_l_up   = ak.prod(btagEfficienciesData_l_up[btagged],axis=-1)   * ak.prod((1.-btagEfficienciesData_l_up[np.invert(btagged)]),axis=-1)
+            pData_l_down = ak.prod(btagEfficienciesData_l_down[btagged],axis=-1) * ak.prod((1.-btagEfficienciesData_l_down[np.invert(btagged)]),axis=-1)
 
             pMC[pMC==0]=1. #avoid 0/0 error
             btagWeight = pData/pMC
@@ -806,9 +835,9 @@ class TTGammaProcessor(processor.ProcessorABC):
             eleRECO = self.ele_reco_sf(tightElectron.eta, tightElectron.pt)
             eleRECOerr = self.ele_reco_err(tightElectron.eta, tightElectron.pt)
             
-            eleSF = (eleID*eleRECO).prod()
-            eleSF_up = ((eleID + eleIDerr) * (eleRECO + eleRECOerr)).prod()
-            eleSF_down = ((eleID - eleIDerr) * (eleRECO - eleRECOerr)).prod()
+            eleSF = ak.prod((eleID*eleRECO), axis=-1)
+            eleSF_up   = ak.prod(((eleID + eleIDerr) * (eleRECO + eleRECOerr)), axis=-1)
+            eleSF_down = ak.prod(((eleID - eleIDerr) * (eleRECO - eleRECOerr)), axis=-1)
 
             weights.add('eleEffWeight',weight=eleSF,weightUp=eleSF_up,weightDown=eleSF_down)
 
@@ -821,9 +850,9 @@ class TTGammaProcessor(processor.ProcessorABC):
             muTrig = self.mu_iso_sf(abs(tightMuon.eta), tightMuon.pt)
             muTrigerr = self.mu_iso_err(abs(tightMuon.eta), tightMuon.pt)
             
-            muSF = (muID*muIso*muTrig).prod()
-            muSF_up = ((muID + muIDerr) * (muIso + muIsoerr) * (muTrig + muTrigerr)).prod()
-            muSF_down = ((muID - muIDerr) * (muIso - muIsoerr) * (muTrig - muTrigerr)).prod()
+            muSF = ak.prod((muID*muIso*muTrig), axis=-1)
+            muSF_up   = ak.prod(((muID + muIDerr) * (muIso + muIsoerr) * (muTrig + muTrigerr)), axis=-1)
+            muSF_down = ak.prod(((muID - muIDerr) * (muIso - muIsoerr) * (muTrig - muTrigerr)), axis=-1)
 
             weights.add('muEffWeight',weight=muSF,weightUp=muSF_up, weightDown=muSF_down)
 
@@ -842,22 +871,41 @@ class TTGammaProcessor(processor.ProcessorABC):
                 weights.add('Q2Scale',weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
 
 #            evtWeight *= muSF
-        
-        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown', 'JERUp', 'JERDown', 'JESUp', 'JESDown']
+        """
+
+        ###################
+        # FILL HISTOGRAMS
+        ###################
+        # PART 3: Uncomment to add histograms
+        systList = ['noweight','nominal']
+
+        # PART 4: SYSTEMATICS
+        # uncomment the full list after systematics have been implemented        
+#        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown', 'JERUp', 'JERDown', 'JESUp', 'JESDown']
+
+
 
 
         if isData:
             systList = ['noweight']
 
+        output['pho_pt'].fill(dataset=dataset,
+                                 pt=ak.flatten(tightPhotons.pt[:,:1]))
+
+        """
         for syst in systList:
-            
+
+            #find the event weight to be used when filling the histograms    
             weightSyst = syst
+
+            #in the case of 'nominal', or the jet energy systematics, no weight systematic variation is used (weightSyst=None)
             if syst in ['nominal','JERUp','JERDown','JESUp','JESDown']:
                 weightSyst=None
                 
             if syst=='noweight':
-                evtWeight = np.ones(df.size)
+                evtWeight = np.ones(len(events))
             else:
+                # call weights.weight() with the name of the systematic to be varied
                 evtWeight = weights.weight(weightSyst)
 
             jetSelType = 'jetSel'
@@ -866,6 +914,7 @@ class TTGammaProcessor(processor.ProcessorABC):
                 jetSelType = f'jetSel_{syst}'
                 M3var = eval(f'M3_{syst}')
 
+            #loop over both electron and muon selections
             for lepton in ['electron','muon']:
                 if lepton=='electron':
                     lepSel='eleSel'
@@ -878,46 +927,52 @@ class TTGammaProcessor(processor.ProcessorABC):
                 zeroPho = selection.all(*(lepSel, jetSelType, 'zeroPho') )
 
                 output['photon_pt'].fill(dataset=dataset,
-                                         pt=tightPhotons.p4.pt[:,:1][phosel].flatten(),
-                                         category=phoCategory[phosel].flatten(),
+                                         pt=ak.flatten(tightPhotons.p4.pt[:,:1][phosel]),
+                                         category=ak.flatten(phoCategory[phosel]),
                                          lepFlavor=lepton,
                                          systematic=syst,
-                                         weight=evtWeight[phosel].flatten())
+                                         weight=evtWeight[phosel])
+#                                         weight=evtWeight[phosel].flatten())
     
                 output['photon_eta'].fill(dataset=dataset,
-                                          eta=tightPhotons.eta[:,:1][phosel].flatten(),
-                                          category=phoCategory[phosel].flatten(),
+                                          eta=ak.flatten(tightPhotons.eta[:,:1][phosel]),
+                                          category=ak.flatten(phoCategory[phosel]),
                                           lepFlavor=lepton,
                                           systematic=syst,
-                                          weight=evtWeight[phosel].flatten())
+                                          weight=evtWeight[phosel])
+ #                                         weight=evtWeight[phosel].flatten())
                 
                 output['photon_chIsoSideband'].fill(dataset=dataset,
-                                                    chIso=loosePhotonsSideband.chIso[:,:1][phoselSideband].flatten(),
-                                                    category=phoCategorySideband[phoselSideband].flatten(),
+                                                    chIso=ak.flatten(loosePhotonsSideband.chIso[:,:1][phoselSideband]),
+                                                    category=ak.flatten(phoCategorySideband[phoselSideband]),
                                                     lepFlavor=lepton,
                                                     systematic=syst,
-                                                    weight=evtWeight[phoselSideband].flatten())
+                                                    weight=evtWeight[phoselSideband])
+#                                                    weight=evtWeight[phoselSideband].flatten())
                 
                 output['photon_chIso'].fill(dataset=dataset,
-                                            chIso=loosePhotons.chIso[:,:1][phoselLoose].flatten(),
-                                            category=phoCategoryLoose[phoselLoose].flatten(),
+                                            chIso=ak.flatten(loosePhotons.chIso[:,:1][phoselLoose]),
+                                            category=ak.flatten(phoCategoryLoose[phoselLoose]),
                                             lepFlavor=lepton,
                                             systematic=syst,
-                                            weight=evtWeight[phoselLoose].flatten())
+                                            weight=evtWeight[phoselLoose])
+#                                            weight=evtWeight[phoselLoose].flatten())
                 
                 
                 output['M3'].fill(dataset=dataset,
-                                  M3=M3var[phosel].flatten(),
-                                  category=phoCategoryLoose[phosel].flatten(),
+                                  M3=ak.flatten(M3var[phosel]),
+                                  category=ak.flatten(phoCategoryLoose[phosel]),
                                   lepFlavor=lepton,
                                   systematic=syst,
-                                  weight=evtWeight[phosel].flatten())
+                                  weight=evtWeight[phosel])
+#                                  weight=evtWeight[phosel].flatten())
                 
                 output['M3Presel'].fill(dataset=dataset,
-                                        M3=M3var[zeroPho].flatten(),
+                                        M3=ak.flatten(M3var[zeroPho]),
                                         lepFlavor=lepton,
                                         systematic=syst,
-                                        weight=evtWeight[zeroPho].flatten())                            
+                                        weight=evtWeight[zeroPho])
+#                                        weight=evtWeight[zeroPho].flatten())                            
     
             
             phosel_e = selection.all(*('eleSel', jetSelType, 'onePho') )
@@ -927,34 +982,38 @@ class TTGammaProcessor(processor.ProcessorABC):
             phosel_3j0t_mu = selection.all(*('muSel', f'{jetSelType}_3j0t', 'onePho') )
 
             output['photon_lepton_mass'].fill(dataset=dataset,
-                                              mass=egammaMass[phosel_e].flatten(),
-                                              category=phoCategory[phosel_e].flatten(),
+                                              mass=ak.flatten(egammaMass[phosel_e]),
+                                              category=ak.flatten(phoCategory[phosel_e]),
                                               lepFlavor='electron',
                                               systematic=syst,
-                                              weight=evtWeight[phosel_e].flatten())
+                                              weight=evtWeight[phosel_e])
+#                                              weight=evtWeight[phosel_e].flatten())
             output['photon_lepton_mass'].fill(dataset=dataset,
-                                              mass=mugammaMass[phosel_mu].flatten(),
-                                              category=phoCategory[phosel_mu].flatten(),
+                                              mass=ak.flatten(mugammaMass[phosel_mu]),
+                                              category=ak.flatten(phoCategory[phosel_mu]),
                                               lepFlavor='muon',
                                               systematic=syst,
-                                              weight=evtWeight[phosel_mu].flatten())
+                                              weight=evtWeight[phosel_mu])
+#                                              weight=evtWeight[phosel_mu].flatten())
     
             output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
-                                                   mass=egammaMass[phosel_3j0t_e].flatten(),
-                                                   category=phoCategory[phosel_3j0t_e].flatten(),
+                                                   mass=ak.flatten(egammaMass[phosel_3j0t_e]),
+                                                   category=ak.flatten(phoCategory[phosel_3j0t_e]),
                                                    lepFlavor='electron',
                                                    systematic=syst,
-                                                   weight=evtWeight[phosel_3j0t_e].flatten())
+                                                   weight=evtWeight[phosel_3j0t_e])
+#                                                   weight=evtWeight[phosel_3j0t_e].flatten())
             output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
-                                                   mass=mugammaMass[phosel_3j0t_mu].flatten(),
-                                                   category=phoCategory[phosel_3j0t_mu].flatten(),
+                                                   mass=ak.flatten(mugammaMass[phosel_3j0t_mu]),
+                                                   category=ak.flatten(phoCategory[phosel_3j0t_mu]),
                                                    lepFlavor='muon',
                                                    systematic=syst,
-                                                   weight=evtWeight[phosel_3j0t_mu].flatten())
+                                                   weight=evtWeight[phosel_3j0t_mu])
+#                                                   weight=evtWeight[phosel_3j0t_mu].flatten())
             
 
-        output['EventCount'] = len(df['event'])
 
+        """
         return output
 
     def postprocess(self, accumulator):
