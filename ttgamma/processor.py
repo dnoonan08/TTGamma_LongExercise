@@ -1,9 +1,7 @@
 import time
 
 from coffea import hist, util
-#from coffea.analysis_objects import JaggedCandidateArray
 import coffea.processor as processor
-#from coffea.jetmet_tools import FactorizedJetCorrector, JetCorrectionUncertainty, JetTransformer, JetResolution, JetResolutionScaleFactor
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from functools import partial
 import uproot
@@ -291,14 +289,6 @@ class TTGammaProcessor(processor.ProcessorABC):
             except:
                 hasWeights=False
         """
-        #ARH probably buggy, because phi might not be in range of [-pi, pi]
-        def dR(one,two):
-            pairs = ak.cartesian({"i0":one,"i1":two},nested=True)
-            diffPhi = abs(pairs.i0.phi - pairs.i1.phi)
-            diffEta = abs(pairs.i0.eta - pairs.i1.eta)
-            return np.sqrt(diffPhi*diffPhi + diffEta*diffEta)
-
-
 
         #################
         # OVERLAP REMOVAL
@@ -337,33 +327,27 @@ class TTGammaProcessor(processor.ProcessorABC):
                                 (events.GenPart.status==1)
                                )
             #potential overlap photons are only those passing the kinematic cuts
-            OverlapPhotons = events.GenPart[overlapPhoSelect] 
+            overlapPhotons = events.GenPart[overlapPhoSelect] 
 
             #if the overlap photon is actually from a non prompt decay, it's not part of the phase space of the separate sample
            #ARH idx = OverlapPhotons.genPartIdxMother
             #ARH fix this: maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
             #                            genpdgid.content, genpdgid.starts, genpdgid.stops, 
             #                            genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-           
-            finalGen = events.GenPart[((events.GenPart.status==1)|(events.GenPart.status==71)) & 
-                                      ~((abs(events.GenPart.pdgId)==12) | (abs(events.GenPart.pdgId)==14) | (abs(events.GenPart.pdgId)==16))]
 
-#            genPairs = ak.cartesian({"pho":OverlapPhotons,"gen":finalGen},nested=True)
-#ARH: need to remove cases where the cross product is the gen photon with itself            genPairs = genPairs[~(genPairs.pho == genPairs.gen)]
-#            dRPairs  = genPairs.pho.delta_r(genPairs.gen)
+            #don't consider neutrinos and don't calculate the dR between the overlapPhoton and itself
+            #ARH: do we need some tiny minimum pt requirement on these gen particles?
+            finalGen = events.GenPart[((events.GenPart.status==1)|(events.GenPart.status==71)) & (events.GenPart.pt > 0.01) &
+                                      ~((abs(events.GenPart.pdgId)==12) | (abs(events.GenPart.pdgId)==14) | (abs(events.GenPart.pdgId)==16)) &
+                                      ~overlapPhoSelect]
 
-            dRPairs = dR(OverlapPhotons,finalGen)
-#            genPairs = OverlapPhotons['p4'].cross(finalGen['p4'],nested=True)
-            ##remove the case where the cross produce is the gen photon with itself
-#            genPairs = genPairs[~(genPairs.i0==genPairs.i1)]
-#            #find closest gen particle to overlap photons
-#            dRPairs = genPairs.i0.delta_r(genPairs.i1)
-
+            #calculate dR between overlap photons and nearest gen particle
+            phoGen, phoGenDR = overlapPhotons.nearest(finalGen, return_metric = True)
+            phoGenMask = ak.fill_none(phoGenDR > overlapDR, True)
 
             #the event is overlapping with the separate sample if there is an overlap photon passing the dR cut and not coming from hadronic activity
-            isOverlap = ak.any(( (ak.min(dRPairs,axis=-1)>overlapDR)  ), axis=-1)
-            #ARH isOverlap = ak.any(( (ak.min(dRPairs,axis=-1)>overlapDR) & maxParent>37  ), axis=-1)
-#((dRPairs.min()>overlapDR) & (maxParent<37)).any()
+            #ARH add maxParent > 37 cut here
+            isOverlap = ak.any(phoGenMask, axis=-1)
             passOverlapRemoval = ~isOverlap
 
         else:
@@ -438,11 +422,13 @@ class TTGammaProcessor(processor.ProcessorABC):
         looseElectron = events.Electron[electronSelectLoose]
 
         #### Calculate deltaR between photon and nearest lepton 
-        phoMu = dR(events.Photon, tightMuon)
-        dRphomu = ak.all(phoMu>0.4, axis=-1) | (ak.num(tightMuon)==0)  
+        # phoMuDR is the delta R value to the nearest muon 
+        # ak.fill_none is used to set the mask value to True when there are no muons in the event
+        phoMu, phoMuDR  = events.Photon.nearest(tightMuon,return_metric=True)
+        phoMuMask = ak.fill_none(phoMuDR > 0.4, True)
         
-        phoEle = dR(events.Photon, tightElectron)
-        dRphoele = ak.all(phoEle>0.4, axis=-1) | (ak.num(tightElectron)==0)
+        phoEle, phoEleDR = events.Photon.nearest(tightElectron, return_metric=True)
+        phoEleMask = ak.fill_none(phoEleDR > 0.4, True)
 
         #photon selection (no ID requirement used here)
         photonSelect = ((events.Photon.pt>20) & 
@@ -450,7 +436,7 @@ class TTGammaProcessor(processor.ProcessorABC):
                         (events.Photon.isScEtaEE | events.Photon.isScEtaEB) &
                         (events.Photon.electronVeto) & 
                         np.invert(events.Photon.pixelSeed) & 
-                        dRphomu & dRphoele
+                        phoMuMask & phoEleMask
                        )
         
 
@@ -475,26 +461,26 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # 1. ADD SELECTION
         #  Object selection
-        #select tightPhotons, the subset of photons passing the photonSelect cut and the photonID cut        
-        tightPhotons = events.Photon[photonSelect & photonID]
-        #select loosePhotons, the subset of photons passing the photonSelect cut and all photonID cuts without the charged hadron isolation cut applied
-        loosePhotons = events.Photon[photonSelect & photonID_NoChIsoSIEIE & photon_PhoFull5x5SigmaIEtaIEtaCut]
+        #select tightPhoton, the subset of photons passing the photonSelect cut and the photonID cut        
+        tightPhoton = events.Photon[photonSelect & photonID]
+        #select loosePhoton, the subset of photons passing the photonSelect cut and all photonID cuts without the charged hadron isolation cut applied
+        loosePhoton = events.Photon[photonSelect & photonID_NoChIsoSIEIE & photon_PhoFull5x5SigmaIEtaIEtaCut]
 
         #ARH: not sure if this is used
-        loosePhotonsSideband = events.Photon[photonSelect & photonID_NoChIsoSIEIE & (events.Photon.sieie>0.012)]
+        loosePhotonSideband = events.Photon[photonSelect & photonID_NoChIsoSIEIE & (events.Photon.sieie>0.012)]
 
 
         #ARH ADD JET TRANSFORMER HERE!
 
         ##check dR jet,lepton & jet,photon
-        jetMu = dR(events.Jet,tightMuon)
-        dRjetmu = ak.all(jetMu>0.4,axis=-1) | (ak.num(tightMuon)==0)
+        jetMu, jetMuDR = events.Jet.nearest(tightMuon, return_metric=True)
+        jetMuMask = ak.fill_none(jetMuDR > 0.4, True)
 
-        jetEle = dR(events.Jet,tightElectron)
-        dRjetele = ak.all(jetEle>0.4,axis=-1) | (ak.num(tightElectron)==0)
+        jetEle, jetEleDR = events.Jet.nearest(tightElectron, return_metric=True)
+        jetEleMask = ak.fill_none(jetEleDR > 0.4, True)
 
-        jetPho = dR(events.Jet,tightPhotons)
-        dRjetpho = ak.all(jetPho>0.4,axis=-1) | (ak.num(tightPhotons)==0)
+        jetPho, jetPhoDR = events.Jet.nearest(tightPhoton, return_metric=True)
+        jetPhoMask = ak.fill_none(jetPhoDR > 0.4, True)
 
         # 1. ADD SELECTION
         #select good jets
@@ -504,7 +490,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         jetSelectNoPt = ((abs(events.Jet.eta) < 2.4) &
                          ((events.Jet.jetId >> jetIDbit & 1)==1) &
-                         dRjetmu & dRjetele & dRjetpho )
+                         jetMuMask & jetEleMask & jetPhoMask )
         
         jetSelect = jetSelectNoPt & (events.Jet.pt > 30)
 
@@ -596,17 +582,17 @@ class TTGammaProcessor(processor.ProcessorABC):
         selection.add('jetSel_3j0t', ak.to_numpy((ak.num(tightJets) >= 3)     & (ak.num(bTaggedJets) == 0) ))
 
         # add selection for events with exactly 0 tight photons
-        selection.add('zeroPho', ak.to_numpy(ak.num(tightPhotons) == 0))
+        selection.add('zeroPho', ak.to_numpy(ak.num(tightPhoton) == 0))
 
         # add selection for events with exactly 1 tight photon
-        selection.add('onePho',  ak.to_numpy(ak.num(tightPhotons) == 1))
+        selection.add('onePho',  ak.to_numpy(ak.num(tightPhoton) == 1))
 
         # add selection for events with exactly 1 loose photon
-        selection.add('loosePho',ak.to_numpy(ak.num(loosePhotons) == 1))
+        selection.add('loosePho',ak.to_numpy(ak.num(loosePhoton) == 1))
 
         #ARH not sure we use this anymore
         #add selection for events with exactly 1 loose photon from the sideband
-        selection.add('loosePhoSideband', ak.to_numpy(ak.num(loosePhotonsSideband) == 1))
+        selection.add('loosePhoSideband', ak.to_numpy(ak.num(loosePhotonSideband) == 1))
 
         ##################
         # EVENT VARIABLES
@@ -625,9 +611,9 @@ class TTGammaProcessor(processor.ProcessorABC):
         leadingMuon = tightMuon[::1]
         leadingElectron = tightElectron[::1]
 
-        leadingPhoton = tightPhotons[:,:1]
-        leadingPhotonLoose = loosePhotons[:,:1]
-        leadingPhotonSideband = loosePhotonsSideband[:,:1]
+        leadingPhoton = tightPhoton[:,:1]
+        leadingPhotonLoose = loosePhoton[:,:1]
+        leadingPhotonSideband = loosePhotonSideband[:,:1]
 
         # 2. DEFINE VARIABLES
         # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the .cross() method)
@@ -891,7 +877,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             systList = ['noweight']
 
         output['pho_pt'].fill(dataset=dataset,
-                                 pt=ak.flatten(tightPhotons.pt[:,:1]))
+                                 pt=ak.flatten(tightPhoton.pt[:,:1]))
 
         """
         for syst in systList:
@@ -928,7 +914,7 @@ class TTGammaProcessor(processor.ProcessorABC):
                 zeroPho = selection.all(*(lepSel, jetSelType, 'zeroPho') )
 
                 output['photon_pt'].fill(dataset=dataset,
-                                         pt=ak.flatten(tightPhotons.p4.pt[:,:1][phosel]),
+                                         pt=ak.flatten(tightPhoton.p4.pt[:,:1][phosel]),
                                          category=ak.flatten(phoCategory[phosel]),
                                          lepFlavor=lepton,
                                          systematic=syst,
@@ -936,7 +922,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 #                                         weight=evtWeight[phosel].flatten())
     
                 output['photon_eta'].fill(dataset=dataset,
-                                          eta=ak.flatten(tightPhotons.eta[:,:1][phosel]),
+                                          eta=ak.flatten(tightPhoton.eta[:,:1][phosel]),
                                           category=ak.flatten(phoCategory[phosel]),
                                           lepFlavor=lepton,
                                           systematic=syst,
@@ -944,7 +930,7 @@ class TTGammaProcessor(processor.ProcessorABC):
  #                                         weight=evtWeight[phosel].flatten())
                 
                 output['photon_chIsoSideband'].fill(dataset=dataset,
-                                                    chIso=ak.flatten(loosePhotonsSideband.chIso[:,:1][phoselSideband]),
+                                                    chIso=ak.flatten(loosePhotonSideband.chIso[:,:1][phoselSideband]),
                                                     category=ak.flatten(phoCategorySideband[phoselSideband]),
                                                     lepFlavor=lepton,
                                                     systematic=syst,
@@ -952,7 +938,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 #                                                    weight=evtWeight[phoselSideband].flatten())
                 
                 output['photon_chIso'].fill(dataset=dataset,
-                                            chIso=ak.flatten(loosePhotons.chIso[:,:1][phoselLoose]),
+                                            chIso=ak.flatten(loosePhoton.chIso[:,:1][phoselLoose]),
                                             category=ak.flatten(phoCategoryLoose[phoselLoose]),
                                             lepFlavor=lepton,
                                             systematic=syst,
