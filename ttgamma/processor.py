@@ -422,6 +422,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         looseElectron = events.Electron[electronSelectLoose]
 
         #### Calculate deltaR between photon and nearest lepton 
+        # Remove photons that are within 0.4 of a lepton
         # phoMuDR is the delta R value to the nearest muon 
         # ak.fill_none is used to set the mask value to True when there are no muons in the event
         phoMu, phoMuDR  = events.Photon.nearest(tightMuon,return_metric=True)
@@ -439,8 +440,7 @@ class TTGammaProcessor(processor.ProcessorABC):
                         phoMuMask & phoEleMask
                        )
         
-
-        #split out the ID requirement, enabling Iso and SIEIE to be inverted for control regions
+        #split out the ID requirement, enabling Iso to be inverted for control regions
         photonID = events.Photon.cutBased >= 2
 
         #parse VID cuts, define loose photons (not used yet)
@@ -451,26 +451,24 @@ class TTGammaProcessor(processor.ProcessorABC):
         photon_ChIsoCut = (events.Photon.vidNestedWPBitmap>>8 & 3)>=2  
         photon_NeuIsoCut = (events.Photon.vidNestedWPBitmap>>10 & 3)>=2  
         photon_PhoIsoCut = (events.Photon.vidNestedWPBitmap>>12 & 3)>=2  
-        
-        photonID_NoChIsoSIEIE = (photon_MinPtCut & 
-                                 photon_PhoSCEtaMultiRangeCut & 
-                                 photon_PhoSingleTowerHadOverEmCut & 
-                                 photon_PhoFull5x5SigmaIEtaIEtaCut & 
-                                 photon_NeuIsoCut & 
-                                 photon_PhoIsoCut)
+
+        #photons passing all ID requirements, without the charged hadron isolation cut applied
+        photonID_NoChIso = (photon_MinPtCut & 
+                            photon_PhoSCEtaMultiRangeCut & 
+                            photon_PhoSingleTowerHadOverEmCut & 
+                            photon_PhoFull5x5SigmaIEtaIEtaCut & 
+                            photon_NeuIsoCut & 
+                            photon_PhoIsoCut)
 
         # 1. ADD SELECTION
         #  Object selection
         #select tightPhoton, the subset of photons passing the photonSelect cut and the photonID cut        
         tightPhoton = events.Photon[photonSelect & photonID]
         #select loosePhoton, the subset of photons passing the photonSelect cut and all photonID cuts without the charged hadron isolation cut applied
-        loosePhoton = events.Photon[photonSelect & photonID_NoChIsoSIEIE & photon_PhoFull5x5SigmaIEtaIEtaCut]
-
-        #ARH: not sure if this is used
-        loosePhotonSideband = events.Photon[photonSelect & photonID_NoChIsoSIEIE & (events.Photon.sieie>0.012)]
+        loosePhoton = events.Photon[photonSelect & photonID_NoChIso]
 
 
-        #ARH ADD JET TRANSFORMER HERE!
+        #ARH: ADD JET TRANSFORMER HERE!
 
         ##check dR jet,lepton & jet,photon
         jetMu, jetMuDR = events.Jet.nearest(tightMuon, return_metric=True)
@@ -484,8 +482,8 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # 1. ADD SELECTION
         #select good jets
-        # jetsshould have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above (dRjetmu, dRjetele, dRjetpho)
-        ##medium jet ID cut                                                                                                                                            
+        # jetsshould have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above
+        ##medium jet ID cut
         jetIDbit = 1
 
         jetSelectNoPt = ((abs(events.Jet.eta) < 2.4) &
@@ -496,13 +494,13 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # 1. ADD SELECTION
         #select the subset of jets passing the jetSelect cuts
-        tightJets = events.Jet[jetSelect]                                                                                                                             
+        tightJet = events.Jet[jetSelect]                                                                                                                             
     
         # 1. ADD SELECTION
-        # select the subset of tightJets which pass the Deep CSV tagger
+        # select the subset of tightJet which pass the Deep CSV tagger
         bTagWP = 0.6321   #2016 DeepCSV working point
         btagged = events.Jet.btagDeepB>bTagWP  
-        bTaggedJets= events.Jet[jetSelect & btagged]
+        bTaggedJet= events.Jet[jetSelect & btagged]
 
 
         #####################
@@ -548,8 +546,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         #                                            have no electrons
         #                                            have no loose muons
         #                                            have no loose electrons
-        #ARH uncomment passOverlapRemoval
-        muon_eventSelection = (muTrigger & #passOverlapRemoval & 
+        muon_eventSelection = (muTrigger & passOverlapRemoval & 
                                oneMuon & eleVeto & 
                                looseMuonVeto & looseElectronVeto) 
 
@@ -559,15 +556,15 @@ class TTGammaProcessor(processor.ProcessorABC):
         #                                                have no muons
         #                                                have no loose muons
         #                                                have no loose electrons
-        #ARH uncomment passOverlapRemoval 
-        electron_eventSelection = (eleTrigger & #passOverlapRemoval &
+        electron_eventSelection = (eleTrigger & passOverlapRemoval &
                                    oneEle & muVeto & 
                                    looseMuonVeto & looseElectronVeto)  
 
         # 1. ADD SELECTION
         #add selection 'eleSel', for events passing the electron event selection, and muSel for those passing the muon event selection
-        #  ex: selection.add('testSelection', array_of_booleans)
+        #  ex: selection.add('testSelection', ak.to_numpy(event_mask))
     
+        #ARH CoffeaQ: is there a better way than ak.to_numpy?
         #create a selection object
         selection = processor.PackedSelection()
 
@@ -575,11 +572,11 @@ class TTGammaProcessor(processor.ProcessorABC):
         selection.add('muSel',ak.to_numpy(muon_eventSelection))
 
         #add two jet selection criteria
-        #   First, 'jetSel' which selects events with at least 4 tightJets and at least one bTaggedJets
+        #   First, 'jetSel' which selects events with at least 4 tightJet and at least one bTaggedJet
         nJets = 4
-        selection.add('jetSel',     ak.to_numpy( (ak.num(tightJets) >= nJets) & (ak.num(bTaggedJets) >= 1) ))
-        #   Second, 'jetSel_3j0t' which selects events with at least 3 tightJets and exactly zero bTaggedJets
-        selection.add('jetSel_3j0t', ak.to_numpy((ak.num(tightJets) >= 3)     & (ak.num(bTaggedJets) == 0) ))
+        selection.add('jetSel',     ak.to_numpy( (ak.num(tightJet) >= nJets) & (ak.num(bTaggedJet) >= 1) ))
+        #   Second, 'jetSel_3j0t' which selects events with at least 3 tightJet and exactly zero bTaggedJet
+        selection.add('jetSel_3j0t', ak.to_numpy((ak.num(tightJet) >= 3)     & (ak.num(bTaggedJet) == 0) ))
 
         # add selection for events with exactly 0 tight photons
         selection.add('zeroPho', ak.to_numpy(ak.num(tightPhoton) == 0))
@@ -590,10 +587,6 @@ class TTGammaProcessor(processor.ProcessorABC):
         # add selection for events with exactly 1 loose photon
         selection.add('loosePho',ak.to_numpy(ak.num(loosePhoton) == 1))
 
-        #ARH not sure we use this anymore
-        #add selection for events with exactly 1 loose photon from the sideband
-        selection.add('loosePhoSideband', ak.to_numpy(ak.num(loosePhotonSideband) == 1))
-
         ##################
         # EVENT VARIABLES
         ##################
@@ -603,7 +596,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         ## Define M3, mass of 3-jet pair with highest pT
         # find all possible combinations of 3 tight jets in the events 
         #hint: using the ak.combinations(array,n) method chooses n unique items from array. Use the "fields" option to define keys you can use to access the items
-        triJet=ak.combinations(tightJets,3,fields=["first","second","third"])
+        triJet=ak.combinations(tightJet,3,fields=["first","second","third"])
         triJetPt = (triJet.first + triJet.second + triJet.third).pt
         triJetMass = (triJet.first + triJet.second + triJet.third).mass
         M3 = triJetMass[ak.argmax(triJetPt,axis=-1)]
@@ -611,9 +604,8 @@ class TTGammaProcessor(processor.ProcessorABC):
         leadingMuon = tightMuon[::1]
         leadingElectron = tightElectron[::1]
 
-        leadingPhoton = tightPhoton[:,:1]
-        leadingPhotonLoose = loosePhoton[:,:1]
-        leadingPhotonSideband = loosePhotonSideband[:,:1]
+        leadingPhoton = tightPhoton[::1]
+        leadingPhotonLoose = loosePhoton[::1]
 
         # 2. DEFINE VARIABLES
         # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the .cross() method)
