@@ -7,8 +7,7 @@ source ${LCG}/setup.sh
 python -m venv --copies $NAME
 source $NAME/bin/activate
 python -m pip install setuptools pip --upgrade
-python -m pip install "uproot4<1"
-python -m pip install "coffea==0.6.47"
+python -m pip install git+https://github.com/lgray/coffea.git@ak_uproot_namechange
 python -m pip install xxhash
 
 sed -i '40s/.*/VIRTUAL_ENV="$(cd "$(dirname "$(dirname "${BASH_SOURCE[0]}" )")" \&\& pwd)"/' $NAME/bin/activate

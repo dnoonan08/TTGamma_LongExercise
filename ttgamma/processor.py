@@ -3,11 +3,11 @@ import time
 from coffea import hist, util
 #from coffea.analysis_objects import JaggedCandidateArray
 import coffea.processor as processor
-from coffea.jetmet_tools import FactorizedJetCorrector, JetCorrectionUncertainty, JetTransformer, JetResolution, JetResolutionScaleFactor
+#from coffea.jetmet_tools import FactorizedJetCorrector, JetCorrectionUncertainty, JetTransformer, JetResolution, JetResolutionScaleFactor
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from functools import partial
 import uproot
-import awkward1 as ak
+import awkward as ak
 #from awkward import JaggedArray
 import numpy as np
 import pickle
@@ -28,7 +28,7 @@ if (version.parse(coffea.__version__) < version.parse('0.6.47') ):
 import os.path
 cwd = os.path.dirname(__file__)
 
-
+"""
 with open(f'{cwd}/utils/taggingEfficienciesDenseLookup.pkl', 'rb') as _file:
     taggingEffLookup = pickle.load(_file)
 
@@ -72,7 +72,7 @@ JER = JetResolution(**{name:Jetevaluator[name] for name in jer_names})
 JERsf = JetResolutionScaleFactor(**{name:Jetevaluator[name] for name in jersf_names})
 
 Jet_transformer = JetTransformer(jec=JECcorrector,junc=JECuncertainties, jer = JER, jersf = JERsf)
-
+"""
 
 @numba.jit(nopython=True)
 def maxHistoryPDGID(idxList_contents, idxList_starts, idxList_stops, pdgID_contents, pdgID_starts, pdgID_stops, motherIdx_contents, motherIdx_starts, motherIdx_stops):
@@ -146,6 +146,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         self.eventNum = eventNum
         self.runNum = runNum
 
+        """
         ext = extractor()
         ext.add_weight_sets([f"btag2016 * {cwd}/ScaleFactors/Btag/DeepCSV_2016LegacySF_V1.btag.csv"])
         ext.finalize()
@@ -192,7 +193,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         self.mu_iso_err = dense_lookup.dense_lookup(mu_iso_err, mu_iso_edges)
         self.mu_trig_sf = dense_lookup.dense_lookup(mu_trig_vals, mu_trig_edges)
         self.mu_trig_err = dense_lookup.dense_lookup(mu_trig_err, mu_trig_edges)
-        
+        """
 
         
         
