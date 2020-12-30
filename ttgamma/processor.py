@@ -2,6 +2,7 @@ import time
 
 from coffea import hist, util
 import coffea.processor as processor
+from coffea.nanoevents.methods import nanoaod
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from functools import partial
 import uproot
@@ -101,6 +102,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         ################################
         # INITIALIZE COFFEA PROCESSOR
         ################################
+        ak.behavior.update(nanoaod.behavior)
 
         self.mcEventYields = mcEventYields
 
@@ -208,6 +210,9 @@ class TTGammaProcessor(processor.ProcessorABC):
         isData = 'Data' in dataset
         
         rho = events.fixedGridRhoFastjetAll
+
+        #ARH: temporary fix, will be added to Coffea
+        events["Photon","charge"] = 0
 
 ###To-do list:
 ## Fix buggy overlap removal
@@ -601,26 +606,19 @@ class TTGammaProcessor(processor.ProcessorABC):
         triJetMass = (triJet.first + triJet.second + triJet.third).mass
         M3 = triJetMass[ak.argmax(triJetPt,axis=-1)]
 
-        leadingMuon = tightMuon[::1]
-        leadingElectron = tightElectron[::1]
+        leadingMuon = tightMuon[:,:1]
+        leadingElectron = tightElectron[:,:1]
 
-        leadingPhoton = tightPhoton[::1]
-        leadingPhotonLoose = loosePhoton[::1]
+        leadingPhoton = tightPhoton[:,:1]
+        leadingPhotonLoose = loosePhoton[:,:1]
 
         # 2. DEFINE VARIABLES
-        # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the .cross() method)
-        egammaPairs = ak.cartesian({"i0":tightElectron,"i1":leadingPhoton},nested=True)
-        #ARH can't figure this one out yet
-        """
-        egammaMass  = ?
-        # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the .cross() method)
-        mugammaPairs = ?
-        mugammaMass = ?
-        egamma = leadingElectron['p4'].cross(leadingPhoton['p4'])
-        mugamma = leadingMuon['p4'].cross(leadingPhoton['p4'])
-        egammaMass = (egamma.i0 + egamma.i1).mass
-        mugammaMass = (mugamma.i0 + mugamma.i1).mass
-        """
+        # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the ak.cartesian() method)
+        egammaPairs = ak.cartesian({"pho":leadingPhoton, "ele": tightElectron})
+        egammaMass = (egammaPairs.pho + egammaPairs.ele).mass
+        # define mugammaMass, mass of combinations of tightMuon and leadingPhoton (hint: using the ak.cartesian() method) 
+        mugammaPairs = ak.cartesian({"pho":leadingPhoton, "mu":tightMuon})
+        mugammaMass = (mugammaPairs.pho + mugammaPairs.mu).mass
 
         ###################
         # PHOTON CATEGORIES
