@@ -7,7 +7,6 @@ from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from functools import partial
 import uproot
 import awkward as ak
-#from awkward import JaggedArray
 import numpy as np
 import pickle
 import sys
@@ -18,6 +17,9 @@ import re
 from .utils.plotting import plotWithRatio
 from .utils.crossSections import *
 from .utils.efficiencies import getMuSF, getEleSF
+
+#ARH: first version, not tested yet
+from .utils.genParentage import maxHistoryPDGID
 
 from packaging import version
 import coffea
@@ -72,27 +74,6 @@ JERsf = JetResolutionScaleFactor(**{name:Jetevaluator[name] for name in jersf_na
 
 Jet_transformer = JetTransformer(jec=JECcorrector,junc=JECuncertainties, jer = JER, jersf = JERsf)
 """
-
-@numba.jit(nopython=True)
-def maxHistoryPDGID(idxList_contents, idxList_starts, idxList_stops, pdgID_contents, pdgID_starts, pdgID_stops, motherIdx_contents, motherIdx_starts, motherIdx_stops):
-    maxPDGID_array = np.ones(len(idxList_starts),np.int32)*-1
-    for i in range(len(idxList_starts)):
-        if idxList_starts[i]==idxList_stops[i]:
-            continue
-            
-        idxList = idxList_contents[idxList_starts[i]:idxList_stops[i]]
-        pdgID = pdgID_contents[pdgID_starts[i]:pdgID_stops[i]]
-        motherIdx = motherIdx_contents[motherIdx_starts[i]:motherIdx_stops[i]]
-    
-        idx = idxList[0]
-        maxPDGID = -1
-        while idx>-1:
-            pdg = pdgID[idx]
-            maxPDGID = max(maxPDGID, abs(pdg))
-            idx = motherIdx[idx]
-        maxPDGID_array[i] = maxPDGID
-    return maxPDGID_array
-
 
 
 # Look at ProcessorABC to see the expected methods and what they are supposed to do
@@ -341,7 +322,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             #                            genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
 
             #don't consider neutrinos and don't calculate the dR between the overlapPhoton and itself
-            #ARH: do we need some tiny minimum pt requirement on these gen particles?
+            #ARH: do we need some tiny minimum pt requirement on these gen particles? (wasn't used in 2020)
             finalGen = events.GenPart[((events.GenPart.status==1)|(events.GenPart.status==71)) & (events.GenPart.pt > 0.01) &
                                       ~((abs(events.GenPart.pdgId)==12) | (abs(events.GenPart.pdgId)==14) | (abs(events.GenPart.pdgId)==16)) &
                                       ~overlapPhoSelect]
