@@ -192,12 +192,18 @@ class TTGammaProcessor(processor.ProcessorABC):
         
         rho = events.fixedGridRhoFastjetAll
 
-        #ARH: temporary fix, will be added to Coffea
+        #Temporary patch so we can add photon and lepton four vectors. Not needed for newer versions of NanoAOD
         events["Photon","charge"] = 0
 
+        #Calculate the maximum pdgID of any of the particles in the GenPart history
+        idx = ak.to_numpy(ak.flatten(abs(events.GenPart.pdgId)))
+        par = ak.to_numpy(ak.flatten(events.GenPart.genPartIdxMother))
+        num = ak.to_numpy(ak.num(events.GenPart.pdgId))        
+        maxParentFlatten = maxHistoryPDGID(idx,par,num)
+        events["GenPart","maxParent"] = ak.unflatten(maxParentFlatten, num)
+
 ###To-do list:
-## Fix buggy overlap removal
-## Jet transformer
+## transformer
 ## LHE and gen weights
       
         """
@@ -307,20 +313,17 @@ class TTGammaProcessor(processor.ProcessorABC):
             genmotherIdx = events.GenPart.genPartIdxMother
             genpdgid = events.GenPart.pdgId
 
+            #potential overlap photons are only those passing the kinematic cuts 
+            #if the overlap photon is actually from a non prompt decay (maxParent > 37), it's not part of the phase space of the separate sample 
             overlapPhoSelect = ((events.GenPart.pt>=overlapPt) & 
                                 (abs(events.GenPart.eta) < overlapEta) & 
                                 (events.GenPart.pdgId==22) & 
-                                (events.GenPart.status==1)
+                                (events.GenPart.status==1) & 
+                                (events.GenPart.maxParent < 37)
                                )
-            #potential overlap photons are only those passing the kinematic cuts
             overlapPhotons = events.GenPart[overlapPhoSelect] 
 
-            #if the overlap photon is actually from a non prompt decay, it's not part of the phase space of the separate sample
-           #ARH idx = OverlapPhotons.genPartIdxMother
-            #ARH fix this: maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-            #                            genpdgid.content, genpdgid.starts, genpdgid.stops, 
-            #                            genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
+            #also require that photons are separate from all other gen particles
             #don't consider neutrinos and don't calculate the dR between the overlapPhoton and itself
             #ARH: do we need some tiny minimum pt requirement on these gen particles? (wasn't used in 2020)
             finalGen = events.GenPart[((events.GenPart.status==1)|(events.GenPart.status==71)) & (events.GenPart.pt > 0.01) &
@@ -331,8 +334,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             phoGen, phoGenDR = overlapPhotons.nearest(finalGen, return_metric = True)
             phoGenMask = ak.fill_none(phoGenDR > overlapDR, True)
 
-            #the event is overlapping with the separate sample if there is an overlap photon passing the dR cut and not coming from hadronic activity
-            #ARH add maxParent > 37 cut here
+            #the event is overlapping with the separate sample if there is an overlap photon passing the dR cut, kinematic cuts, and not coming from hadronic activity
             isOverlap = ak.any(phoGenMask, axis=-1)
             passOverlapRemoval = ~isOverlap
 
@@ -455,6 +457,30 @@ class TTGammaProcessor(processor.ProcessorABC):
 
 
         #ARH: ADD JET TRANSFORMER HERE!
+        """
+        #update jet kinematics based on jete energy systematic uncertainties
+        if not isData:
+        genJet = JaggedCandidateArray.candidatesfromcounts(
+                df['nGenJet'],
+                pt = df['GenJet_pt'],
+                eta = df['GenJet_eta'],
+                phi = df['GenJet_phi'],
+                mass = df['GenJet_mass'],
+            )
+            jets.genJetIdx[jets.genJetIdx>=events.GenJet.counts] = -1 #fixes a bug in events.GenJet indices, skimmed after events.GenJet matching
+            jets['ptGenJet'][jets.genJetIdx>-1] = events.GenJet[jets.genJetIdx[jets.genJetIdx>-1]].pt
+            jets['rho'] = jets.pt.ones_like()*rho
+            #adds additional columns to the jets array, containing the jet pt with JEC and JER variations
+            #    additional columns added to jets:  pt_jer_up,   mass_jer_up
+            #                                       pt_jer_down, mass_jer_down
+            #                                       pt_jes_up,   mass_jes_up
+            #                                       pt_jes_down, mass_jes_down
+            Jet_transformer.transform(jets)
+            # 4. ADD SYSTEMATICS
+            #   If processing a jet systematic (based on value of self.jetSyst variable) update the jet pt and mass to reflect the jet systematic uncertainty variations
+            #   Use the function updateJetP4(jets, pt=NEWPT, mass=NEWMASS) to update the pt and mass
+        """
+        
 
         ##check dR jet,lepton & jet,photon
         jetMu, jetMuDR = events.Jet.nearest(tightMuon, return_metric=True)
@@ -468,7 +494,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # 1. ADD SELECTION
         #select good jets
-        # jetsshould have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above
+        # jets should have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above
         ##medium jet ID cut
         jetIDbit = 1
 
@@ -605,88 +631,59 @@ class TTGammaProcessor(processor.ProcessorABC):
         # PHOTON CATEGORIES
         ###################
 
-        #ARH: this is how far I got pre-Christmas
         # Define photon category for each event
-        """
+
+        phoCategory = np.ones(len(events))
+        phoCategoryLoose = np.ones(len(events))
+
+        # PART 2B: Uncomment to begin implementing photon categorization
         if not isData:
-            #### Photon categories, using genIdx branch
+            #### Photon categories, using pdgID of the matched gen particle for the leading photon in the event
+            # reco photons matched to a generated photon
+            matchedPho = ak.any(leadingPhoton.matched_gen.pdgId==22, axis=-1)
             # reco photons really generated as electrons
-            idx = leadingPhoton.genIdx
-
-            matchedPho = (genpdgid[idx]==22).any()
-            isMisIDele = (abs(genpdgid[idx])==11).any()
+            matchedEle =  ak.any(abs(leadingPhoton.matched_gen.pdgId)==11, axis=-1)
+            # if the gen photon has a PDG ID > 25 in it's history, it has a hadronic parent
+            hadronicParent = ak.any(leadingPhoton.matched_gen.maxParent>25, axis=-1)
             
-            maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-                                        genpdgid.content, genpdgid.starts, genpdgid.stops, 
-                                        genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
-            hadronicParent = maxParent>25
-
+            #####
+            # 2. DEFINE VARIABLES
+            # define the photon categories for tight photon events
+            # a genuine photon is a reconstructed photon which is matched to a generator level photon, and does not have a hadronic parent
             isGenPho = matchedPho & ~hadronicParent
+            # a hadronic photon is a reconstructed photon which is matched to a generator level photon, but has a hadronic parent
             isHadPho = matchedPho & hadronicParent
+            # a misidentified electron is a reconstructed photon which is matched to a generator level electron
+            isMisIDele = matchedEle
+            # a hadronic/fake photon is a reconstructed photon that does not fall within any of the above categories
             isHadFake = ~(isMisIDele | isGenPho | isHadPho) & (ak.num(leadingPhoton)==1)
-            
-            #define integer definition for the photon category axis
+
+            #define integer definition for the photon category axis 
             phoCategory = 1*isGenPho + 2*isMisIDele + 3*isHadPho + 4*isHadFake
-            
 
-            isMisIDeleLoose = (leadingPhotonLoose.genFlav==13).any()
-            matchedPhoLoose = (leadingPhotonLoose.genFlav==1).any()
+        
+            # do photon matching for loose photons as well
+            # reco photons matched to a generated photon 
+            matchedPhoLoose = ak.any(leadingPhotonLoose.matched_gen.pdgId==22, axis=-1)
+            # reco photons really generated as electrons 
+            matchedEleLoose =  ak.any(abs(leadingPhotonLoose.matched_gen.pdgId)==11, axis=-1)
+            # if the gen photon has a PDG ID > 25 in it's history, it has a hadronic parent
+            hadronicParentLoose = ak.any(leadingPhotonLoose.matched_gen.maxParent>25, axis=-1)
 
-            # look through parentage to find if any hadrons in genPhoton parent history
-            idx = leadingPhotonLoose.genIdx
-
-            maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-                                        genpdgid.content, genpdgid.starts, genpdgid.stops, 
-                                        genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
-            hadronicParent = maxParent>25
-
-            isGenPhoLoose = matchedPhoLoose & ~hadronicParent
-            isHadPhoLoose = matchedPhoLoose & hadronicParent
+            #####
+            # 2. DEFINE VARIABLES
+            # a genuine photon is a reconstructed photon which is matched to a generator level photon, and does not have a hadronic parent
+            isGenPhoLoose = matchedPhoLoose & ~hadronicParentLoose
+            # a hadronic photon is a reconstructed photon which is matched to a generator level photon, but has a hadronic parent
+            isHadPhoLoose = matchedPhoLoose & hadronicParentLoose
+            # a misidentified electron is a reconstructed photon which is matched to a generator level electron
+            isMisIDeleLoose = matchedEle
+            # a hadronic/fake photon is a reconstructed photon that does not fall within any of the above categories
             isHadFakeLoose = ~(isMisIDeleLoose | isGenPhoLoose | isHadPhoLoose) & (ak.num(leadingPhotonLoose)==1)        
 
             #define integer definition for the photon category axis
             phoCategoryLoose = 1*isGenPhoLoose + 2*isMisIDeleLoose + 3*isHadPhoLoose + 4*isHadFakeLoose
-
-            
-            isMisIDeleSideband = (leadingPhotonSideband.genFlav==13).any()
-            matchedPhoSideband = (leadingPhotonSideband.genFlav==1).any()
-
-            # look through parentage to find if any hadrons in genPhoton parent history
-            idx = leadingPhotonSideband.genIdx
-
-            maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-                                        genpdgid.content, genpdgid.starts, genpdgid.stops, 
-                                        genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
-            hadronicParent = maxParent>25
-
-            isGenPhoSideband = matchedPhoSideband & ~hadronicParent
-            isHadPhoSideband = matchedPhoSideband & hadronicParent
-            isHadFakeSideband = ~(isMisIDeleSideband | isGenPhoSideband | isHadPhoSideband) & (ak.num(leadingPhotonSideband)==1)        
-
-            #define integer definition for the photon category axis
-            phoCategorySideband = 1*isGenPhoSideband + 2*isMisIDeleSideband + 3*isHadPhoSideband + 4*isHadFakeSideband            
-        else:
-            phoCategory = np.ones(df.size)
-            phoCategoryLoose = np.ones(df.size)
-            phoCategorySideband = np.ones(df.size)
         
-        if not isData:
-            selection.add('jetSel_JERUp', (ak.num(tightJets_JERUp) >= nJets) & ((tightJets_JERUp.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERUp_3j0t', (ak.num(tightJets_JERUp) >= 3) & ((tightJets_JERUp.btagDeepB>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JERDown', (ak.num(tightJets_JERDown) >= nJets) & ((tightJets_JERDown.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERDown_3j0t', (ak.num(tightJets_JERDown) >= 3) & ((tightJets_JERDown.btagDeepB>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JESUp', (ak.num(tightJets_JESUp) >= nJets) & ((tightJets_JESUp.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESUp_3j0t', (ak.num(tightJets_JESUp) >= 3) & ((tightJets_JESUp.btagDeepB>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JESDown', (ak.num(tightJets_JESDown) >= nJets) & ((tightJets_JESDown.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESDown_3j0t', (ak.num(tightJets_JESDown) >= 3) & ((tightJets_JESDown.btagDeepB>bTagWP).sum() == 0) )
-
-        """
         ################
         # EVENT WEIGHTS
         ################
