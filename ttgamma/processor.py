@@ -679,7 +679,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         #create a processor Weights object, with the same length as the number of events in the chunk
         weights = processor.Weights(len(events))
- 
+        """
         if not 'Data' in dataset:
             lumiWeight = np.ones(df.size)
             nMCevents = self.mcEventYields[datasetFull]
@@ -690,10 +690,6 @@ class TTGammaProcessor(processor.ProcessorABC):
             weights.add('lumiWeight',lumiWeight)
 
 #            evtWeight *= xsec * lumis[year] / nMCevents
-
-
-
-            weights.add('lumiWeight',lumiWeight)
 
             nPUTrue = df['Pileup_nTrueInt']
             puWeight = puLookup(datasetFull, nPUTrue)
