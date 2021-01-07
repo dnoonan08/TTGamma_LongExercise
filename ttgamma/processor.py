@@ -4,27 +4,17 @@ from coffea import hist, util
 import coffea.processor as processor
 from coffea.nanoevents.methods import nanoaod
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
-from functools import partial
-import uproot
+from coffea.lookup_tools import extractor, dense_lookup
+
 import awkward as ak
 import numpy as np
 import pickle
-import sys
-from coffea.lookup_tools import extractor, dense_lookup
-import numba
 import re
 
-from .utils.plotting import plotWithRatio
 from .utils.crossSections import *
 from .utils.efficiencies import getMuSF, getEleSF
-
-#ARH: first version, not tested yet
 from .utils.genParentage import maxHistoryPDGID
-
-from packaging import version
-import coffea
-if (version.parse(coffea.__version__) < version.parse('0.6.47') ):
-    raise Exception('Code requires coffea version 0.6.47 or newer')
+from .utils.updateJets import updateJetP4
 
 import os.path
 cwd = os.path.dirname(__file__)
@@ -689,16 +679,19 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         #create a processor Weights object, with the same length as the number of events in the chunk
         weights = processor.Weights(len(events))
-  
-        """
-#        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
+ 
         if not 'Data' in dataset:
             lumiWeight = np.ones(df.size)
             nMCevents = self.mcEventYields[datasetFull]
             xsec = crossSections[dataset]
-            lumiWeight *= xsec * lumis[year] / nMCevents
+            luminosity = 35860.0
+            lumiWeight *= xsec * luminosity / nMCevents 
+
+            weights.add('lumiWeight',lumiWeight)
 
 #            evtWeight *= xsec * lumis[year] / nMCevents
+
+
 
             weights.add('lumiWeight',lumiWeight)
 
@@ -844,7 +837,8 @@ class TTGammaProcessor(processor.ProcessorABC):
             systList = ['noweight']
 
         output['pho_pt'].fill(dataset=dataset,
-                                 pt=ak.flatten(tightPhoton.pt[:,:1]))
+                              pt = ak.flatten(ak.fill_none(M3,-1)))
+#                                 pt=ak.flatten(tightPhoton.pt[:,:1]))
 
         
         for syst in systList:
@@ -905,7 +899,7 @@ class TTGammaProcessor(processor.ProcessorABC):
                 
                 #    fill M3 histogram, for events passing the phosel selection
                 output['M3'].fill(dataset=dataset,
-                                  M3=ak.flatten(M3[phosel])
+                                  M3=ak.flatten(ak.fill_none(M3[phosel],-1)),
                                   category=phoCategory[phosel],
                                   lepFlavor=lepton,
                                   systematic=syst)
