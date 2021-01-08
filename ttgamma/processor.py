@@ -497,10 +497,17 @@ class TTGammaProcessor(processor.ProcessorABC):
         # 2. DEFINE VARIABLES
         # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the ak.cartesian() method)
         egammaPairs = ak.cartesian({"pho":leadingPhoton, "ele": tightElectron})
-        egammaMass = (egammaPairs.pho + egammaPairs.ele).mass
+        # avoid erros when egammaPairs is empty
+        if ak.all(ak.num(egammaPairs)==0):
+            egammaMass =  np.ones((len(events),1))*-1
+        else:
+            egammaMass = (egammaPairs.pho + egammaPairs.ele).mass
         # define mugammaMass, mass of combinations of tightMuon and leadingPhoton (hint: using the ak.cartesian() method) 
         mugammaPairs = ak.cartesian({"pho":leadingPhoton, "mu":tightMuon})
-        mugammaMass = (mugammaPairs.pho + mugammaPairs.mu).mass
+        if ak.all(ak.num(mugammaPairs)==0):
+            mugammaMass = np.ones((len(events),1))*-1
+        else:
+            mugammaMass = (mugammaPairs.pho + mugammaPairs.mu).mass
 
         ###################
         # PHOTON CATEGORIES
