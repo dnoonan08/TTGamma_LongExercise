@@ -18,17 +18,15 @@ from .utils.updateJets import updateJetP4
 import os.path
 cwd = os.path.dirname(__file__)
 
-#load lookup tools for pileup scale factors
+
+taggingEffLookup = util.load(f'{cwd}/utils/taggingEfficienciesDenseLookup.coffea')
+
 puLookup = util.load(f'{cwd}/ScaleFactors/puLookup.coffea')
 puLookup_Down = util.load(f'{cwd}/ScaleFactors/puLookup_Down.coffea')
 puLookup_Up = util.load(f'{cwd}/ScaleFactors/puLookup_Up.coffea')
 
 
 """
-with open(f'{cwd}/utils/taggingEfficienciesDenseLookup.pkl', 'rb') as _file:
-    taggingEffLookup = pickle.load(_file)
-
-
 Jetext = extractor()
 Jetext.add_weight_sets([
         f"* * {cwd}/ScaleFactors/JEC/Summer16_07Aug2017_V11_MC_L1FastJet_AK4PFchs.jec.txt",
@@ -572,7 +570,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         #create a processor Weights object, with the same length as the number of events in the chunk
         weights = processor.Weights(len(events))
-        
+
         if not 'Data' in dataset:
             lumiWeight = np.ones(len(events))
             nMCevents = self.mcEventYields[datasetFull]
@@ -582,18 +580,11 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             weights.add('lumiWeight',lumiWeight)
 
-            """
-#            evtWeight *= xsec * lumis[year] / nMCevents
-
-            #puWeight = puLookup(datasetFull, events.Pileup.nTrueInt)
-            #puWeight_Up = puLookup_Up(datasetFull, events.Pileup.nTrueInt)
-            #puWeight_Down = puLookup_Down(datasetFull, events.Pileup.nTrueInt)
+            puWeight = puLookup[datasetFull](events.Pileup.nTrueInt)
+            puWeight_Up = puLookup_Up[datasetFull](events.Pileup.nTrueInt)
+            puWeight_Down = puLookup_Down[datasetFull](events.Pileup.nTrueInt)
             
-            #weights.add('puWeight',weight=puWeight, weightUp=puWeight_Up, weightDown=puWeight_Down)
-
-            bSF = BTagScaleFactor('ttgamma/ScaleFactors/Btag/DeepCSV_2016LegacySF_V1.btag.csv', 'medium')
-            bJetSF_heavy_up = bSF.eval('down', tighJets.hadronFlavour, tightJets.eta, tightJets.pt)
-
+            """
             #btag key name
             #name / working Point / type / systematic / jetType
             #  ... / 0-loose 1-medium 2-tight / comb,mujets,iterativefit / central,up,down / 0-b 1-c 2-udcsg 
