@@ -4,48 +4,30 @@ from coffea import hist, util
 import coffea.processor as processor
 from coffea.nanoevents.methods import nanoaod
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
-from functools import partial
-import uproot
+from coffea.lookup_tools import extractor, dense_lookup
+
 import awkward as ak
 import numpy as np
 import pickle
-import sys
-from coffea.lookup_tools import extractor, dense_lookup
-import numba
 import re
 
-from .utils.plotting import plotWithRatio
 from .utils.crossSections import *
-from .utils.efficiencies import getMuSF, getEleSF
-
-#ARH: first version, not tested yet
 from .utils.genParentage import maxHistoryPDGID
-
-from packaging import version
-import coffea
-if (version.parse(coffea.__version__) < version.parse('0.6.47') ):
-    raise Exception('Code requires coffea version 0.6.47 or newer')
+from .utils.updateJets import updateJetP4
 
 import os.path
 cwd = os.path.dirname(__file__)
 
-"""
-with open(f'{cwd}/utils/taggingEfficienciesDenseLookup.pkl', 'rb') as _file:
-    taggingEffLookup = pickle.load(_file)
-
+#load lookup tools for pileup scale factors
 puLookup = util.load(f'{cwd}/ScaleFactors/puLookup.coffea')
 puLookup_Down = util.load(f'{cwd}/ScaleFactors/puLookup_Down.coffea')
 puLookup_Up = util.load(f'{cwd}/ScaleFactors/puLookup_Up.coffea')
 
 
-muSFFileList = [{'id'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunBCDEF_SF_ID.root", "NUM_TightID_DEN_genTracks_eta_pt"),
-                 'iso'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunBCDEF_SF_ISO.root", "NUM_TightRelIso_DEN_TightIDandIPCut_eta_pt"),
-                 'trig'  : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_trigger_EfficienciesAndSF_RunBtoF.root", "IsoMu24_OR_IsoTkMu24_PtEtaBins/abseta_pt_ratio"),
-                 'scale' : 19.656062760/35.882515396},
-                {'id'     : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunGH_SF_ID.root", "NUM_TightID_DEN_genTracks_eta_pt"),
-                 'iso'   : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_legacy_rereco_rootfiles_RunGH_SF_ISO.root", "NUM_TightRelIso_DEN_TightIDandIPCut_eta_pt"),
-                 'trig'  : (f"{cwd}/ScaleFactors/MuEGammaScaleFactors/mu2016/EfficienciesStudies_2016_trigger_EfficienciesAndSF_RunGtoH.root", "IsoMu24_OR_IsoTkMu24_PtEtaBins/abseta_pt_ratio"),
-                 'scale' : 16.226452636/35.882515396}]
+"""
+with open(f'{cwd}/utils/taggingEfficienciesDenseLookup.pkl', 'rb') as _file:
+    taggingEffLookup = pickle.load(_file)
+
 
 Jetext = extractor()
 Jetext.add_weight_sets([
@@ -79,7 +61,7 @@ Jet_transformer = JetTransformer(jec=JECcorrector,junc=JECuncertainties, jer = J
 # Look at ProcessorABC to see the expected methods and what they are supposed to do
 class TTGammaProcessor(processor.ProcessorABC):
 #     def __init__(self, runNum = -1, eventNum = -1):
-    def __init__(self, runNum = -1, eventNum = -1, mcEventYields = None):
+    def __init__(self, runNum = -1, eventNum = -1, mcEventYields = None, jetSyst='nominal'):
         ################################
         # INITIALIZE COFFEA PROCESSOR
         ################################
@@ -87,14 +69,15 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         self.mcEventYields = mcEventYields
 
+        if not jetSyst in ['nominal','JERUp','JERDown','JESUp','JESDown']:
+            raise Exception(f'{jetSyst} is not in acceptable jet systematic types [nominal, JERUp, JERDown, JESUp, JESDown]')
+
+        self.jetSyst = jetSyst
+
         dataset_axis = hist.Cat("dataset", "Dataset")
         lep_axis = hist.Cat("lepFlavor", "Lepton Flavor")
 
         systematic_axis = hist.Cat("systematic", "Systematic Uncertainty")
-
-        # lep_axis = hist.Bin("lepFlavor", r"ElectronOrMuon", 2, -1, 1)
-        # lep_axis.identifiers()[0].label = 'Electron'
-        # lep_axis.identifiers()[1].label = 'Muon'
 
         m3_axis = hist.Bin("M3", r"$M_3$ [GeV]", 200, 0., 1000)
         mass_axis = hist.Bin("mass", r"$m_{\ell\gamma}$ [GeV]", 400, 0., 400)
@@ -109,23 +92,34 @@ class TTGammaProcessor(processor.ProcessorABC):
         phoCategory_axis.identifiers()[2].label = "Hadronic Photon"    
         phoCategory_axis.identifiers()[3].label = "Hadronic Fake"    
         
-        ###
+        ### Accumulator for holding histograms
         self._accumulator = processor.dict_accumulator({
             ##photon histograms
             'pho_pt': hist.Hist("Counts", dataset_axis, pt_axis),
             'photon_pt': hist.Hist("Counts", dataset_axis, pt_axis, phoCategory_axis, lep_axis, systematic_axis),
             'photon_eta': hist.Hist("Counts", dataset_axis, eta_axis, phoCategory_axis, lep_axis, systematic_axis),
             'photon_chIso': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis, systematic_axis),
-            'photon_chIsoSideband': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis, systematic_axis),
             'photon_lepton_mass': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis, systematic_axis),
             'photon_lepton_mass_3j0t': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis, systematic_axis),
             'M3'      : hist.Hist("Counts", dataset_axis, m3_axis, phoCategory_axis, lep_axis, systematic_axis),
-            'M3Presel': hist.Hist("Counts", dataset_axis, m3_axis, lep_axis, systematic_axis),
             'EventCount':processor.value_accumulator(int)
         })
 
-        self.eventNum = eventNum
-        self.runNum = runNum
+        self.ele_id_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_id_sf.coffea')
+        self.ele_id_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_id_err.coffea')
+
+        self.ele_reco_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_reco_sf.coffea')
+        self.ele_reco_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_reco_err.coffea')
+
+
+        self.mu_id_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_id_sf.coffea')
+        self.mu_id_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_id_err.coffea')
+
+        self.mu_iso_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_iso_sf.coffea')
+        self.mu_iso_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_iso_err.coffea')
+
+        self.mu_trig_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_trig_sf.coffea')
+        self.mu_trig_err = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/mu_trig_err.coffea')
 
         """
         ext = extractor()
@@ -133,47 +127,6 @@ class TTGammaProcessor(processor.ProcessorABC):
         ext.finalize()
         self.evaluator = ext.make_evaluator()
         
-        ele_id_file = uproot.open(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele2016/2016LegacyReReco_ElectronTight_Fall17V2.root')
-        self.ele_id_sf = dense_lookup.dense_lookup(ele_id_file["EGamma_SF2D"].values, ele_id_file["EGamma_SF2D"].edges)
-        self.ele_id_err = dense_lookup.dense_lookup(ele_id_file["EGamma_SF2D"].variances**0.5, ele_id_file["EGamma_SF2D"].edges)
-
-        ele_reco_file = uproot.open(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele2016/egammaEffi.txt_EGM2D_runBCDEF_passingRECO.root')
-        self.ele_reco_sf = dense_lookup.dense_lookup(ele_reco_file["EGamma_SF2D"].values, ele_reco_file["EGamma_SF2D"].edges)
-        self.ele_reco_err = dense_lookup.dense_lookup(ele_reco_file["EGamma_SF2D"].variances**.5, ele_reco_file["EGamma_SF2D"].edges)
-
-        
-        
-        
-        mu_id_vals = 0
-        mu_id_err = 0
-        mu_iso_vals = 0
-        mu_iso_err = 0
-        mu_trig_vals = 0
-        mu_trig_err = 0
-
-        for scaleFactors in muSFFileList:
-            id_file = uproot.open(scaleFactors['id'][0])
-            iso_file = uproot.open(scaleFactors['iso'][0])
-            trig_file = uproot.open(scaleFactors['trig'][0])
-
-            mu_id_vals += id_file[scaleFactors['id'][1]].values * scaleFactors['scale']
-            mu_id_err += id_file[scaleFactors['id'][1]].variances**0.5 * scaleFactors['scale']
-            mu_id_edges = id_file[scaleFactors['id'][1]].edges
-
-            mu_iso_vals += iso_file[scaleFactors['iso'][1]].values * scaleFactors['scale']
-            mu_iso_err += iso_file[scaleFactors['iso'][1]].variances**0.5 * scaleFactors['scale']
-            mu_iso_edges = iso_file[scaleFactors['iso'][1]].edges
-
-            mu_trig_vals += trig_file[scaleFactors['trig'][1]].values * scaleFactors['scale']
-            mu_trig_err += trig_file[scaleFactors['trig'][1]].variances**0.5 * scaleFactors['scale']
-            mu_trig_edges = trig_file[scaleFactors['trig'][1]].edges
-
-        self.mu_id_sf = dense_lookup.dense_lookup(mu_id_vals, mu_id_edges)
-        self.mu_id_err = dense_lookup.dense_lookup(mu_id_err, mu_id_edges)
-        self.mu_iso_sf = dense_lookup.dense_lookup(mu_iso_vals, mu_iso_edges)
-        self.mu_iso_err = dense_lookup.dense_lookup(mu_iso_err, mu_iso_edges)
-        self.mu_trig_sf = dense_lookup.dense_lookup(mu_trig_vals, mu_trig_edges)
-        self.mu_trig_err = dense_lookup.dense_lookup(mu_trig_err, mu_trig_edges)
         """
 
         
@@ -192,89 +145,17 @@ class TTGammaProcessor(processor.ProcessorABC):
         
         rho = events.fixedGridRhoFastjetAll
 
-        #ARH: temporary fix, will be added to Coffea
+        #Temporary patch so we can add photon and lepton four vectors. Not needed for newer versions of NanoAOD
         events["Photon","charge"] = 0
+        #Calculate charged hadron isolation for photons
+        events["Photon","chIso"] = (events.Photon.pfRelIso03_chg)*(events.Photon.pt)
 
-###To-do list:
-## Fix buggy overlap removal
-## Jet transformer
-## LHE and gen weights
-      
-        """
-        #ARH: Fix jet variables, genJetIdx
-     #       genJetIdx=df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
-     #       ptGenJet=np.zeros_like(df['Jet_pt']), #df['Jet_genJetIdx'] if not isData else np.ones_like(df['Jet_jetId']),
-      
-    #ARH    events["Jet","hadFlav"] = events.Jet.hadronFlavour if not isData else np.ones_like(events.Jet.jetId)
-    #ARH    events["Jet","ptGenJet"]= np.zeros_like(events.Jet.pt)
-
-        
-        if not isData:
-            #ARH: Not confident the changes below will work
-            # fix what seems to be a bug, genJets get skimmed after the genJet matching:
-            #   jets matched to a genJet with pt<10 still get assigned a value for Jet_genJetIdx, but that index is not present in the
-            #   genJet list because it is cut.  In these cases, set idx to -1
-
-            #ARH might have to use np.where or ak.where or something
-#            events.Jet.genJetIdx[events.Jet.genJetIdx >= ak.num(events.GenJet)] = -1
-#            events.Jet.ptGenJet[events.Jet.genJetIdx>-1] = events.Jet.matched_gen.pt
- 
-            events["Jets","rho"] = events.Jet.pt.ones_like()*rho
-
-            Jet_transformer.transform(jets, forceStochastic=False)
-
-        # *** ARH: tried to fix these variables; see if it worked
-        chIso=df['Photon_pfRelIso03_chg']*df['Photon_pt']
-        events["Photon","genFlav"]=events.Photon.genPartFlav if not isData else np.ones_like(events.Photon.electronVeto)
-        events["Photon","genIdx"] =events.Photon.genPartIdx  if not isData else np.ones_like(events.Photon.electronVeto)
-        # *** 
-        
-        if not isData:
-            genmotherIdx = events.GenPart.genPartIdxMother
-            genpdgid = events.GenPart.pdgId
-            hasWeights=True
-
-            try:
-                generatorWeight = df['Generator_weight']
-                generatorWeight.shape = (generatorWeight.size,1)
-
-                LHEWeight_originalXWGTUP = df['LHEWeight_originalXWGTUP']
-                LHEWeight_originalXWGTUP.shape = (LHEWeight_originalXWGTUP.size,1)
-
-                nPSWeights = df['nPSWeight']
-                PSWeights = df['PSWeight']
-                PSWeights.shape = (nPSWeights.size,int(nPSWeights.mean()))
-                if nPSWeights.mean()==1:
-                    hasWeights=False
-                
-                nLHEScaleWeights = df['nLHEScaleWeight']
-                LHEScaleWeights = df['LHEScaleWeight']
-                LHEScaleWeights.shape = (nLHEScaleWeights.size,int(nLHEScaleWeights.mean()))
-                
-                nLHEPdfWeights = df['nLHEPdfWeight']
-                LHEPdfWeights = df['LHEPdfWeight']
-                LHEPdfWeights.shape = (nLHEPdfWeights.size,int(nLHEPdfWeights.mean()))
-
-
-                #avoid errors from 0/0 division
-                if (LHEPdfWeights[:,:1]==0).any():
-                    LHEPdfWeights[:,0][LHEPdfWeights[:,0]==0] = 1.
-                LHEPdfVariation = LHEPdfWeights / LHEPdfWeights[:,:1]
-
-                if nLHEScaleWeights.mean()==9:
-                    scaleWeightSelector=[0,1,3,5,7,8]
-                elif nLHEScaleWeights.mean()==44:
-                    scaleWeightSelector=[0,5,15,24,34,39]
-                else:
-                    scaleWeightSelector=[]
-
-                LHEScaleVariation = LHEScaleWeights[:,scaleWeightSelector]
-
-                if not (generatorWeight==LHEWeight_originalXWGTUP).all():
-                    PSWeights = PSWeights * LHEWeight_originalXWGTUP / generatorWeight
-            except:
-                hasWeights=False
-        """
+        #Calculate the maximum pdgID of any of the particles in the GenPart history
+        idx = ak.to_numpy(ak.flatten(abs(events.GenPart.pdgId)))
+        par = ak.to_numpy(ak.flatten(events.GenPart.genPartIdxMother))
+        num = ak.to_numpy(ak.num(events.GenPart.pdgId))        
+        maxParentFlatten = maxHistoryPDGID(idx,par,num)
+        events["GenPart","maxParent"] = ak.unflatten(maxParentFlatten, num)
 
         #################
         # OVERLAP REMOVAL
@@ -307,20 +188,17 @@ class TTGammaProcessor(processor.ProcessorABC):
             genmotherIdx = events.GenPart.genPartIdxMother
             genpdgid = events.GenPart.pdgId
 
+            #potential overlap photons are only those passing the kinematic cuts 
+            #if the overlap photon is actually from a non prompt decay (maxParent > 37), it's not part of the phase space of the separate sample 
             overlapPhoSelect = ((events.GenPart.pt>=overlapPt) & 
                                 (abs(events.GenPart.eta) < overlapEta) & 
                                 (events.GenPart.pdgId==22) & 
-                                (events.GenPart.status==1)
+                                (events.GenPart.status==1) & 
+                                (events.GenPart.maxParent < 37)
                                )
-            #potential overlap photons are only those passing the kinematic cuts
             overlapPhotons = events.GenPart[overlapPhoSelect] 
 
-            #if the overlap photon is actually from a non prompt decay, it's not part of the phase space of the separate sample
-           #ARH idx = OverlapPhotons.genPartIdxMother
-            #ARH fix this: maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-            #                            genpdgid.content, genpdgid.starts, genpdgid.stops, 
-            #                            genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
+            #also require that photons are separate from all other gen particles
             #don't consider neutrinos and don't calculate the dR between the overlapPhoton and itself
             #ARH: do we need some tiny minimum pt requirement on these gen particles? (wasn't used in 2020)
             finalGen = events.GenPart[((events.GenPart.status==1)|(events.GenPart.status==71)) & (events.GenPart.pt > 0.01) &
@@ -331,8 +209,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             phoGen, phoGenDR = overlapPhotons.nearest(finalGen, return_metric = True)
             phoGenMask = ak.fill_none(phoGenDR > overlapDR, True)
 
-            #the event is overlapping with the separate sample if there is an overlap photon passing the dR cut and not coming from hadronic activity
-            #ARH add maxParent > 37 cut here
+            #the event is overlapping with the separate sample if there is an overlap photon passing the dR cut, kinematic cuts, and not coming from hadronic activity
             isOverlap = ak.any(phoGenMask, axis=-1)
             passOverlapRemoval = ~isOverlap
 
@@ -455,6 +332,30 @@ class TTGammaProcessor(processor.ProcessorABC):
 
 
         #ARH: ADD JET TRANSFORMER HERE!
+        """
+        #update jet kinematics based on jete energy systematic uncertainties
+        if not isData:
+        genJet = JaggedCandidateArray.candidatesfromcounts(
+                df['nGenJet'],
+                pt = df['GenJet_pt'],
+                eta = df['GenJet_eta'],
+                phi = df['GenJet_phi'],
+                mass = df['GenJet_mass'],
+            )
+            jets.genJetIdx[jets.genJetIdx>=events.GenJet.counts] = -1 #fixes a bug in events.GenJet indices, skimmed after events.GenJet matching
+            jets['ptGenJet'][jets.genJetIdx>-1] = events.GenJet[jets.genJetIdx[jets.genJetIdx>-1]].pt
+            jets['rho'] = jets.pt.ones_like()*rho
+            #adds additional columns to the jets array, containing the jet pt with JEC and JER variations
+            #    additional columns added to jets:  pt_jer_up,   mass_jer_up
+            #                                       pt_jer_down, mass_jer_down
+            #                                       pt_jes_up,   mass_jes_up
+            #                                       pt_jes_down, mass_jes_down
+            Jet_transformer.transform(jets)
+            # 4. ADD SYSTEMATICS
+            #   If processing a jet systematic (based on value of self.jetSyst variable) update the jet pt and mass to reflect the jet systematic uncertainty variations
+            #   Use the function updateJetP4(jets, pt=NEWPT, mass=NEWMASS) to update the pt and mass
+        """
+        
 
         ##check dR jet,lepton & jet,photon
         jetMu, jetMuDR = events.Jet.nearest(tightMuon, return_metric=True)
@@ -468,7 +369,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # 1. ADD SELECTION
         #select good jets
-        # jetsshould have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above
+        # jets should have a pt of at least 30 GeV, |eta| < 2.4, pass the medium jet id (bit-wise selected from the jetID variable), and pass the delta R cuts defined above
         ##medium jet ID cut
         jetIDbit = 1
 
@@ -480,8 +381,8 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # 1. ADD SELECTION
         #select the subset of jets passing the jetSelect cuts
-        tightJet = events.Jet[jetSelect]                                                                                                                             
-    
+        tightJet = events.Jet[jetSelect]
+
         # 1. ADD SELECTION
         # select the subset of tightJet which pass the Deep CSV tagger
         bTagWP = 0.6321   #2016 DeepCSV working point
@@ -585,7 +486,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         triJet=ak.combinations(tightJet,3,fields=["first","second","third"])
         triJetPt = (triJet.first + triJet.second + triJet.third).pt
         triJetMass = (triJet.first + triJet.second + triJet.third).mass
-        M3 = triJetMass[ak.argmax(triJetPt,axis=-1)]
+        M3 = triJetMass[ak.argmax(triJetPt,axis=-1,keepdims=True)]
 
         leadingMuon = tightMuon[:,:1]
         leadingElectron = tightElectron[:,:1]
@@ -596,122 +497,102 @@ class TTGammaProcessor(processor.ProcessorABC):
         # 2. DEFINE VARIABLES
         # define egammaMass, mass of combinations of tightElectron and leadingPhoton (hint: using the ak.cartesian() method)
         egammaPairs = ak.cartesian({"pho":leadingPhoton, "ele": tightElectron})
-        egammaMass = (egammaPairs.pho + egammaPairs.ele).mass
+        # avoid erros when egammaPairs is empty
+        if ak.all(ak.num(egammaPairs)==0):
+            egammaMass =  np.ones((len(events),1))*-1
+        else:
+            egammaMass = (egammaPairs.pho + egammaPairs.ele).mass
         # define mugammaMass, mass of combinations of tightMuon and leadingPhoton (hint: using the ak.cartesian() method) 
         mugammaPairs = ak.cartesian({"pho":leadingPhoton, "mu":tightMuon})
-        mugammaMass = (mugammaPairs.pho + mugammaPairs.mu).mass
+        if ak.all(ak.num(mugammaPairs)==0):
+            mugammaMass = np.ones((len(events),1))*-1
+        else:
+            mugammaMass = (mugammaPairs.pho + mugammaPairs.mu).mass
 
         ###################
         # PHOTON CATEGORIES
         ###################
 
-        #ARH: this is how far I got pre-Christmas
         # Define photon category for each event
-        """
+
+        phoCategory = np.ones(len(events))
+        phoCategoryLoose = np.ones(len(events))
+
+        # PART 2B: Uncomment to begin implementing photon categorization
         if not isData:
-            #### Photon categories, using genIdx branch
+            #### Photon categories, using pdgID of the matched gen particle for the leading photon in the event
+            # reco photons matched to a generated photon
+            matchedPho = ak.any(leadingPhoton.matched_gen.pdgId==22, axis=-1)
             # reco photons really generated as electrons
-            idx = leadingPhoton.genIdx
-
-            matchedPho = (genpdgid[idx]==22).any()
-            isMisIDele = (abs(genpdgid[idx])==11).any()
+            matchedEle =  ak.any(abs(leadingPhoton.matched_gen.pdgId)==11, axis=-1)
+            # if the gen photon has a PDG ID > 25 in it's history, it has a hadronic parent
+            hadronicParent = ak.any(leadingPhoton.matched_gen.maxParent>25, axis=-1)
             
-            maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-                                        genpdgid.content, genpdgid.starts, genpdgid.stops, 
-                                        genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
-            hadronicParent = maxParent>25
-
+            #####
+            # 2. DEFINE VARIABLES
+            # define the photon categories for tight photon events
+            # a genuine photon is a reconstructed photon which is matched to a generator level photon, and does not have a hadronic parent
             isGenPho = matchedPho & ~hadronicParent
+            # a hadronic photon is a reconstructed photon which is matched to a generator level photon, but has a hadronic parent
             isHadPho = matchedPho & hadronicParent
+            # a misidentified electron is a reconstructed photon which is matched to a generator level electron
+            isMisIDele = matchedEle
+            # a hadronic/fake photon is a reconstructed photon that does not fall within any of the above categories
             isHadFake = ~(isMisIDele | isGenPho | isHadPho) & (ak.num(leadingPhoton)==1)
-            
-            #define integer definition for the photon category axis
+
+            #define integer definition for the photon category axis 
             phoCategory = 1*isGenPho + 2*isMisIDele + 3*isHadPho + 4*isHadFake
-            
 
-            isMisIDeleLoose = (leadingPhotonLoose.genFlav==13).any()
-            matchedPhoLoose = (leadingPhotonLoose.genFlav==1).any()
+        
+            # do photon matching for loose photons as well
+            # reco photons matched to a generated photon 
+            matchedPhoLoose = ak.any(leadingPhotonLoose.matched_gen.pdgId==22, axis=-1)
+            # reco photons really generated as electrons 
+            matchedEleLoose =  ak.any(abs(leadingPhotonLoose.matched_gen.pdgId)==11, axis=-1)
+            # if the gen photon has a PDG ID > 25 in it's history, it has a hadronic parent
+            hadronicParentLoose = ak.any(leadingPhotonLoose.matched_gen.maxParent>25, axis=-1)
 
-            # look through parentage to find if any hadrons in genPhoton parent history
-            idx = leadingPhotonLoose.genIdx
-
-            maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-                                        genpdgid.content, genpdgid.starts, genpdgid.stops, 
-                                        genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
-            hadronicParent = maxParent>25
-
-            isGenPhoLoose = matchedPhoLoose & ~hadronicParent
-            isHadPhoLoose = matchedPhoLoose & hadronicParent
+            #####
+            # 2. DEFINE VARIABLES
+            # a genuine photon is a reconstructed photon which is matched to a generator level photon, and does not have a hadronic parent
+            isGenPhoLoose = matchedPhoLoose & ~hadronicParentLoose
+            # a hadronic photon is a reconstructed photon which is matched to a generator level photon, but has a hadronic parent
+            isHadPhoLoose = matchedPhoLoose & hadronicParentLoose
+            # a misidentified electron is a reconstructed photon which is matched to a generator level electron
+            isMisIDeleLoose = matchedEle
+            # a hadronic/fake photon is a reconstructed photon that does not fall within any of the above categories
             isHadFakeLoose = ~(isMisIDeleLoose | isGenPhoLoose | isHadPhoLoose) & (ak.num(leadingPhotonLoose)==1)        
 
             #define integer definition for the photon category axis
             phoCategoryLoose = 1*isGenPhoLoose + 2*isMisIDeleLoose + 3*isHadPhoLoose + 4*isHadFakeLoose
-
-            
-            isMisIDeleSideband = (leadingPhotonSideband.genFlav==13).any()
-            matchedPhoSideband = (leadingPhotonSideband.genFlav==1).any()
-
-            # look through parentage to find if any hadrons in genPhoton parent history
-            idx = leadingPhotonSideband.genIdx
-
-            maxParent = maxHistoryPDGID(idx.content, idx.starts, idx.stops, 
-                                        genpdgid.content, genpdgid.starts, genpdgid.stops, 
-                                        genmotherIdx.content, genmotherIdx.starts, genmotherIdx.stops)
-
-            hadronicParent = maxParent>25
-
-            isGenPhoSideband = matchedPhoSideband & ~hadronicParent
-            isHadPhoSideband = matchedPhoSideband & hadronicParent
-            isHadFakeSideband = ~(isMisIDeleSideband | isGenPhoSideband | isHadPhoSideband) & (ak.num(leadingPhotonSideband)==1)        
-
-            #define integer definition for the photon category axis
-            phoCategorySideband = 1*isGenPhoSideband + 2*isMisIDeleSideband + 3*isHadPhoSideband + 4*isHadFakeSideband            
-        else:
-            phoCategory = np.ones(df.size)
-            phoCategoryLoose = np.ones(df.size)
-            phoCategorySideband = np.ones(df.size)
         
-        if not isData:
-            selection.add('jetSel_JERUp', (ak.num(tightJets_JERUp) >= nJets) & ((tightJets_JERUp.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERUp_3j0t', (ak.num(tightJets_JERUp) >= 3) & ((tightJets_JERUp.btagDeepB>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JERDown', (ak.num(tightJets_JERDown) >= nJets) & ((tightJets_JERDown.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JERDown_3j0t', (ak.num(tightJets_JERDown) >= 3) & ((tightJets_JERDown.btagDeepB>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JESUp', (ak.num(tightJets_JESUp) >= nJets) & ((tightJets_JESUp.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESUp_3j0t', (ak.num(tightJets_JESUp) >= 3) & ((tightJets_JESUp.btagDeepB>bTagWP).sum() == 0) )
-            
-            selection.add('jetSel_JESDown', (ak.num(tightJets_JESDown) >= nJets) & ((tightJets_JESDown.btagDeepB>bTagWP).sum() >= 1) )
-            selection.add('jetSel_JESDown_3j0t', (ak.num(tightJets_JESDown) >= 3) & ((tightJets_JESDown.btagDeepB>bTagWP).sum() == 0) )
-
-        """
         ################
         # EVENT WEIGHTS
         ################
 
         #create a processor Weights object, with the same length as the number of events in the chunk
         weights = processor.Weights(len(events))
-  
-        """
-#        evtWeight = np.ones_like(df['event'],dtype=np.float64)        
+        
         if not 'Data' in dataset:
-            lumiWeight = np.ones(df.size)
+            lumiWeight = np.ones(len(events))
             nMCevents = self.mcEventYields[datasetFull]
             xsec = crossSections[dataset]
-            lumiWeight *= xsec * lumis[year] / nMCevents
-
-#            evtWeight *= xsec * lumis[year] / nMCevents
+            luminosity = 35860.0
+            lumiWeight *= xsec * luminosity / nMCevents 
 
             weights.add('lumiWeight',lumiWeight)
 
-            nPUTrue = df['Pileup_nTrueInt']
-            puWeight = puLookup(datasetFull, nPUTrue)
-            puWeight_Up = puLookup_Up(datasetFull, nPUTrue)
-            puWeight_Down = puLookup_Down(datasetFull, nPUTrue)
+            """
+#            evtWeight *= xsec * lumis[year] / nMCevents
+
+            #puWeight = puLookup(datasetFull, events.Pileup.nTrueInt)
+            #puWeight_Up = puLookup_Up(datasetFull, events.Pileup.nTrueInt)
+            #puWeight_Down = puLookup_Down(datasetFull, events.Pileup.nTrueInt)
             
-            weights.add('puWeight',weight=puWeight, weightUp=puWeight_Up, weightDown=puWeight_Down)
+            #weights.add('puWeight',weight=puWeight, weightUp=puWeight_Up, weightDown=puWeight_Down)
+
+            bSF = BTagScaleFactor('ttgamma/ScaleFactors/Btag/DeepCSV_2016LegacySF_V1.btag.csv', 'medium')
+            bJetSF_heavy_up = bSF.eval('down', tighJets.hadronFlavour, tightJets.eta, tightJets.pt)
 
             #btag key name
             #name / working Point / type / systematic / jetType
@@ -788,6 +669,7 @@ class TTGammaProcessor(processor.ProcessorABC):
             weights.add('btagWeight_heavy',weight=np.ones_like(btagWeight), weightUp=btagWeight_b_up, weightDown=btagWeight_b_down)
             weights.add('btagWeight_light',weight=np.ones_like(btagWeight), weightUp=btagWeight_l_up, weightDown=btagWeight_l_down)
 
+            """
             eleID = self.ele_id_sf(tightElectron.eta, tightElectron.pt)
             eleIDerr = self.ele_id_err(tightElectron.eta, tightElectron.pt)
             eleRECO = self.ele_reco_sf(tightElectron.eta, tightElectron.pt)
@@ -797,10 +679,11 @@ class TTGammaProcessor(processor.ProcessorABC):
             eleSF_up   = ak.prod(((eleID + eleIDerr) * (eleRECO + eleRECOerr)), axis=-1)
             eleSF_down = ak.prod(((eleID - eleIDerr) * (eleRECO - eleRECOerr)), axis=-1)
 
+            # 4. SYSTEMATICS
+            # add electron efficiency weights to the weight container
             weights.add('eleEffWeight',weight=eleSF,weightUp=eleSF_up,weightDown=eleSF_down)
 
-#            evtWeight *= eleSF
-
+        
             muID = self.mu_id_sf(tightMuon.eta, tightMuon.pt)
             muIDerr = self.mu_id_err(tightMuon.eta, tightMuon.pt)
             muIso = self.mu_iso_sf(tightMuon.eta, tightMuon.pt)
@@ -814,43 +697,71 @@ class TTGammaProcessor(processor.ProcessorABC):
 
             weights.add('muEffWeight',weight=muSF,weightUp=muSF_up, weightDown=muSF_down)
 
-            if hasWeights:
-                weights.add('ISR',weight=np.ones(df.size), weightUp=PSWeights[:,2], weightDown=PSWeights[:,0])
-                
-                weights.add('FSR',weight=np.ones(df.size), weightUp=PSWeights[:,3], weightDown=PSWeights[:,1])
 
-                weights.add('PDF', weight=np.ones(df.size), weightUp=LHEPdfVariation.max(axis=1), weightDown=LHEPdfVariation.min(axis=1))
+            #in some samples, generator systematics are not available, in those case the systematic weights of 1. are used
+            if ak.mean(ak.num(events.PSWeight))==1:
+                weights.add('ISR',    weight=np.ones(len(events)),weightUp=np.ones(len(events)),weightDown=np.ones(len(events)))
+                weights.add('FSR',    weight=np.ones(len(events)),weightUp=np.ones(len(events)),weightDown=np.ones(len(events)))
+                weights.add('PDF',    weight=np.ones(len(events)),weightUp=np.ones(len(events)),weightDown=np.ones(len(events)))
+                weights.add('Q2Scale',weight=np.ones(len(events)),weightUp=np.ones(len(events)),weightDown=np.ones(len(events)))
 
-                weights.add('Q2Scale', weight=np.ones(df.size), weightUp=LHEScaleVariation.max(axis=1), weightDown=LHEScaleVariation.min(axis=1))
+            #Otherwise, calculate the weights and systematic variations
             else:
-                weights.add('ISR',    weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
-                weights.add('FSR',    weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
-                weights.add('PDF',    weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
-                weights.add('Q2Scale',weight=np.ones(df.size),weightUp=np.ones(df.size),weightDown=np.ones(df.size))
+                #PDF Uncertainty weights
+                #avoid errors from 0/0 division
+                LHEPdfWeight_0 = ak.where(events.LHEPdfWeight[:,0]==0,1,events.LHEPdfWeight[:,0])
+                LHEPdfVariation = events.LHEPdfWeight / LHEPdfWeight_0
+                weights.add('PDF', weight=np.ones(len(events)), 
+                            weightUp=ak.max(LHEPdfVariation,axis=1), 
+                            weightDown=ak.min(LHEPdfVariation,axis=1))
 
-#            evtWeight *= muSF
-        """
+                #Q2 Uncertainty weights
+                if ak.mean(ak.num(events.LHEScaleWeight)) == 9:
+                    scaleWeightSelector=[0,1,3,5,7,8]
+                elif ak.mean(ak.num(events.LHEScaleWeight)) == 44:
+                    scaleWeightSelector=[0,5,15,24,34,39]
+                else:
+                    scaleWeightSelector=[]
+                LHEScaleVariation = events.LHEScaleWeight[:,scaleWeightSelector]
+                weights.add('Q2Scale', weight=np.ones(len(events)), 
+                            weightUp=ak.max(LHEScaleVariation,axis=1), 
+                            weightDown=ak.min(LHEScaleVariation,axis=1))
+
+                #ISR / FSR uncertainty weights
+                if not ak.all(events.Generator.weight==events.LHEWeight.originalXWGTUP):
+                    psWeights = events.PSWeight * events.LHEWeight.originalXWGTUP / events.Generator.weight
+                else:
+                    psWeights = events.PSWeight
+
+                weights.add('ISR',weight=np.ones(len(events)), weightUp=psWeights[:,2], weightDown=psWeights[:,0])
+                weights.add('FSR',weight=np.ones(len(events)), weightUp=psWeights[:,3], weightDown=psWeights[:,1])
+                
 
         ###################
         # FILL HISTOGRAMS
         ###################
         # PART 3: Uncomment to add histograms
-        systList = ['noweight','nominal']
+#        systList = ['noweight','nominal']
+
+        systList = ['nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+        #ARH: Missing: PU, btag
 
         # PART 4: SYSTEMATICS
         # uncomment the full list after systematics have been implemented        
-#        systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown', 'JERUp', 'JERDown', 'JESUp', 'JESDown']
+        #systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
 
-
-
+        if not self.jetSyst=='nominal':
+            systList=[self.jetSyst]
 
         if isData:
             systList = ['noweight']
 
+        #ARH: temp hist for testing purposes
         output['pho_pt'].fill(dataset=dataset,
-                                 pt=ak.flatten(tightPhoton.pt[:,:1]))
+                              pt = ak.flatten(ak.fill_none(M3,-1)))
+#                                 pt=ak.flatten(tightPhoton.pt[:,:1]))
 
-        """
+        
         for syst in systList:
 
             #find the event weight to be used when filling the histograms    
@@ -866,12 +777,6 @@ class TTGammaProcessor(processor.ProcessorABC):
                 # call weights.weight() with the name of the systematic to be varied
                 evtWeight = weights.weight(weightSyst)
 
-            jetSelType = 'jetSel'
-            M3var = M3
-            if syst in ['JERUp','JERDown','JESUp','JESDown']:
-                jetSelType = f'jetSel_{syst}'
-                M3var = eval(f'M3_{syst}')
-
             #loop over both electron and muon selections
             for lepton in ['electron','muon']:
                 if lepton=='electron':
@@ -879,103 +784,88 @@ class TTGammaProcessor(processor.ProcessorABC):
                 if lepton=='muon':
                     lepSel='muSel'
 
-                phosel = selection.all(*(lepSel, jetSelType, 'onePho'))
-                phoselLoose = selection.all(*(lepSel, jetSelType, 'loosePho') )
-                phoselSideband = selection.all(*(lepSel, jetSelType, 'loosePhoSideband') )
-                zeroPho = selection.all(*(lepSel, jetSelType, 'zeroPho') )
+                # 3. GET HISTOGRAM EVENT SELECTION
+                #  use the selection.all() method to select events passing 
+                #  the lepton selection, 4-jet 1-tag jet selection, and either the one-photon or loose-photon selections
+                #  ex: selection.all( *('LIST', 'OF', 'SELECTION', 'CUTS') )
+                phosel = selection.all(*(lepSel, "jetSel", 'onePho'))
+                phoselLoose = selection.all(*(lepSel, "jetSel", 'loosePho') )
+
+                # 3. FILL HISTOGRAMS
+                #    fill photon_pt and photon_eta, using the tightPhotons array, from events passing the phosel selection
 
                 output['photon_pt'].fill(dataset=dataset,
-                                         pt=ak.flatten(tightPhoton.p4.pt[:,:1][phosel]),
-                                         category=ak.flatten(phoCategory[phosel]),
+                                         pt=ak.flatten(tightPhoton.pt[:,:1][phosel]),
+                                         category=phoCategory[phosel],
                                          lepFlavor=lepton,
                                          systematic=syst,
                                          weight=evtWeight[phosel])
-#                                         weight=evtWeight[phosel].flatten())
     
                 output['photon_eta'].fill(dataset=dataset,
                                           eta=ak.flatten(tightPhoton.eta[:,:1][phosel]),
-                                          category=ak.flatten(phoCategory[phosel]),
+                                          category=phoCategory[phosel],
                                           lepFlavor=lepton,
                                           systematic=syst,
                                           weight=evtWeight[phosel])
- #                                         weight=evtWeight[phosel].flatten())
                 
-                output['photon_chIsoSideband'].fill(dataset=dataset,
-                                                    chIso=ak.flatten(loosePhotonSideband.chIso[:,:1][phoselSideband]),
-                                                    category=ak.flatten(phoCategorySideband[phoselSideband]),
-                                                    lepFlavor=lepton,
-                                                    systematic=syst,
-                                                    weight=evtWeight[phoselSideband])
-#                                                    weight=evtWeight[phoselSideband].flatten())
-                
+                #    fill photon_chIso histogram, using the loosePhotons array (photons passing all cuts, except the charged hadron isolation cuts)
                 output['photon_chIso'].fill(dataset=dataset,
                                             chIso=ak.flatten(loosePhoton.chIso[:,:1][phoselLoose]),
-                                            category=ak.flatten(phoCategoryLoose[phoselLoose]),
+                                            category=phoCategoryLoose[phoselLoose],
                                             lepFlavor=lepton,
                                             systematic=syst,
                                             weight=evtWeight[phoselLoose])
-#                                            weight=evtWeight[phoselLoose].flatten())
                 
-                
+                #    fill M3 histogram, for events passing the phosel selection
                 output['M3'].fill(dataset=dataset,
-                                  M3=ak.flatten(M3var[phosel]),
-                                  category=ak.flatten(phoCategoryLoose[phosel]),
+                                  M3=ak.flatten(ak.fill_none(M3[phosel],-1)),
+                                  category=phoCategory[phosel],
                                   lepFlavor=lepton,
                                   systematic=syst,
                                   weight=evtWeight[phosel])
-#                                  weight=evtWeight[phosel].flatten())
                 
-                output['M3Presel'].fill(dataset=dataset,
-                                        M3=ak.flatten(M3var[zeroPho]),
-                                        lepFlavor=lepton,
-                                        systematic=syst,
-                                        weight=evtWeight[zeroPho])
-#                                        weight=evtWeight[zeroPho].flatten())                            
-    
-            
-            phosel_e = selection.all(*('eleSel', jetSelType, 'onePho') )
-            phosel_mu = selection.all(*('muSel', jetSelType, 'onePho') )
+            phosel_e = selection.all(*('eleSel', "jetSel", 'onePho') )
+            phosel_mu = selection.all(*('muSel', "jetSel", 'onePho') )
+                    
+            # 3. GET HISTOGRAM EVENT SELECTION
+            #  use the selection.all() method to select events passing the eleSel or muSel selection, 
+            # and the 3-jet 0-btag selection, and have exactly one photon
+      
+            phosel_e = selection.all(*('eleSel', "jetSel", 'onePho') )
+            phosel_mu = selection.all(*('muSel', "jetSel", 'onePho') )
 
-            phosel_3j0t_e = selection.all(*('eleSel', f'{jetSelType}_3j0t', 'onePho') )
-            phosel_3j0t_mu = selection.all(*('muSel', f'{jetSelType}_3j0t', 'onePho') )
+            phosel_3j0t_e = selection.all(*('eleSel', "jetSel_3j0t", 'onePho') )
+            phosel_3j0t_mu = selection.all(*('muSel', "jetSel_3j0t", 'onePho') )
 
             output['photon_lepton_mass'].fill(dataset=dataset,
                                               mass=ak.flatten(egammaMass[phosel_e]),
-                                              category=ak.flatten(phoCategory[phosel_e]),
+                                              category=phoCategory[phosel_e],
                                               lepFlavor='electron',
                                               systematic=syst,
                                               weight=evtWeight[phosel_e])
-#                                              weight=evtWeight[phosel_e].flatten())
+                                        
             output['photon_lepton_mass'].fill(dataset=dataset,
                                               mass=ak.flatten(mugammaMass[phosel_mu]),
-                                              category=ak.flatten(phoCategory[phosel_mu]),
+                                              category=phoCategory[phosel_mu],
                                               lepFlavor='muon',
                                               systematic=syst,
                                               weight=evtWeight[phosel_mu])
-#                                              weight=evtWeight[phosel_mu].flatten())
     
             output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
                                                    mass=ak.flatten(egammaMass[phosel_3j0t_e]),
-                                                   category=ak.flatten(phoCategory[phosel_3j0t_e]),
+                                                   category=phoCategory[phosel_3j0t_e],
                                                    lepFlavor='electron',
                                                    systematic=syst,
                                                    weight=evtWeight[phosel_3j0t_e])
-#                                                   weight=evtWeight[phosel_3j0t_e].flatten())
+
             output['photon_lepton_mass_3j0t'].fill(dataset=dataset,
                                                    mass=ak.flatten(mugammaMass[phosel_3j0t_mu]),
-                                                   category=ak.flatten(phoCategory[phosel_3j0t_mu]),
+                                                   category=phoCategory[phosel_3j0t_mu],
                                                    lepFlavor='muon',
                                                    systematic=syst,
                                                    weight=evtWeight[phosel_3j0t_mu])
-#                                                   weight=evtWeight[phosel_3j0t_mu].flatten())
-            
-
-
-        """
+        
         return output
 
     def postprocess(self, accumulator):
         return accumulator
-
-
-
