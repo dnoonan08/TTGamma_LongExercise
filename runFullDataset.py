@@ -4,7 +4,8 @@ from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from ttgamma import TTGammaProcessor
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_2016 as fileset
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_Data_2016
-from ttgamma.utils.fileset2021 import fileset
+from .utils.fileset2021 import fileset
+from .utils.crossSections import *
 
 import time
 import sys
@@ -80,11 +81,11 @@ if 'MC' in args.sample:
         job_fileset = {k: fileset[k] for k in fileset if 'TTGamma' in k}
         mcType = 'MCTTGamma'
     elif 'TTbar1l' in args.sample:
-        job_fileset = {'TTbarPowheg_Semilept_2016': fileset['TTbarPowheg_Semilept_2016'],
-                   'TTbarPowheg_Hadronic_2016': fileset['TTbarPowheg_Hadronic_2016']}
+        job_fileset = {'TTbarPowheg_Semilept': fileset['TTbarPowheg_Semilept'],
+                   'TTbarPowheg_Hadronic': fileset['TTbarPowheg_Hadronic']}
         mcType = 'MCTTbar1l'
     elif 'TTbar2l' in args.sample:
-        job_fileset = {'TTbarPowheg_Dilepton_2016': fileset['TTbarPowheg_Dilepton_2016']}
+        job_fileset = {'TTbarPowheg_Dilepton': fileset['TTbarPowheg_Dilepton']}
         mcType = 'MCTTbar2l'
     elif 'SingleTop' in args.sample:
         job_fileset = {k: fileset[k] for k in fileset if ('ST' in k)}
@@ -125,7 +126,7 @@ if 'MC' in args.sample:
           output['InputEventCount'][dataset_name] +=fhandle["hEvents"].values()[2] - fhandle["hEvents"].values()[0]
 
       # Calculate luminosity scale factor
-      lumi_sfs[dataset_name] = cross_sections[dataset_name] * 35.9 / output["InputEventCount"][dataset_name]
+      lumi_sfs[dataset_name] = crossSections[dataset_name] * 35.9 / output["InputEventCount"][dataset_name]
 
     for key, obj in output.items():
       if isinstance(obj, coffea.hist):
