@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser(description="Batch processing script for ttgamm
 parser.add_argument("sample", type=str, help="Name of process to run (Data, MCTTGamma, MCTTbar1l, MCTTbar2l, MCSingleTop, MCZJets, MCWJets, MCOther)")
 parser.add_argument("--chunksize", type=int, default=25000, help="Chunk size")
 parser.add_argument("--maxchunks", type=int, default=None, help="Max chunks")
+parser.add_argument("--condor", action="store_true", help="Flag for running on condor (disables progress bar)")
 args = parser.parse_args()
 
 tstart = time.time()
@@ -106,7 +107,7 @@ if 'MC' in args.sample:
                                       treename           = 'Events',
                                       processor_instance = TTGammaProcessor(isMC=True),
                                       executor           = processor.futures_executor, #processor.futures_executor,
-                                      executor_args      = {'schema': NanoAODSchema,' workers': 2},#{'workers': 4, 'flatten': True},
+                                      executor_args      = {'schema': NanoAODSchema,' workers': 2, 'status': not args.condor},#{'workers': 4, 'flatten': True},
                                       chunksize          = args.chunksize,
                                       maxchunks          = args.maxchunks
                                   )
@@ -141,7 +142,7 @@ elif args.sample == 'Data':
                                       treename           = 'Events',
                                       processor_instance = TTGammaProcessor(isMC=False),
                                       executor           = processor.futures_executor,
-                                      executor_args      = {'schema': NanoAODSchema,' workers': 2},#{'workers': 4, 'flatten': True},
+                                      executor_args      = {'schema': NanoAODSchema,' workers': 2, 'status': not args.condor},#{'workers': 4, 'flatten': True},
                                       chunksize          = args.chunksize,
                                       maxchunks          = args.maxchunks
                                   )

@@ -5,5 +5,5 @@ source ttgenv/bin/activate
 
 tar -zxf ttgamma.tgz
 
-python runFullDataset.py $1
+python runFullDataset.py $1 --condor
 
