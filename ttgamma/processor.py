@@ -138,8 +138,8 @@ class TTGammaProcessor(processor.ProcessorABC):
         output = self.accumulator.identity()
         output['EventCount'] = len(events)
 
-        datasetFull = events.metadata['dataset']
-        dataset=datasetFull.replace('_2016','')
+        dataset = events.metadata['dataset']
+        datasetFull = dataset+'_2016'
         #isData = 'Data' in dataset
         
         rho = events.fixedGridRhoFastjetAll
@@ -574,11 +574,11 @@ class TTGammaProcessor(processor.ProcessorABC):
         weights = processor.Weights(len(events))
 
         if self.isMC:
-            lumiWeight = np.ones(len(events))
-            nMCevents = self.mcEventYields[datasetFull]
-            xsec = crossSections[dataset]
-            luminosity = 35860.0
-            lumiWeight *= xsec * luminosity / nMCevents 
+            # lumiWeight = np.ones(len(events))
+            # nMCevents = self.mcEventYields[datasetFull]
+            # xsec = crossSections[dataset]
+            # luminosity = 35860.0
+            # lumiWeight *= xsec * luminosity / nMCevents 
 
             #weights.add('lumiWeight',lumiWeight)
 
