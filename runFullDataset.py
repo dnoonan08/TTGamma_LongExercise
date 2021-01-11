@@ -121,22 +121,23 @@ if 'MC' in args.sample:
     output['InputEventCount'] = processor.defaultdict_accumulator(int)
     lumi_sfs = {}
     for dataset_name, dataset_files in job_fileset.items():
-      for filename in dataset_files:
-        with uproot.open(filename) as fhandle:
-          output['InputEventCount'][dataset_name] +=fhandle["hEvents"].values()[2] - fhandle["hEvents"].values()[0]
+        for filename in dataset_files:
+            with uproot.open(filename) as fhandle:
+                output['InputEventCount'][dataset_name] +=fhandle["hEvents"].values()[2] - fhandle["hEvents"].values()[0]
 
       # Calculate luminosity scale factor
       lumi_sfs[dataset_name] = crossSections[dataset_name] * 35.9 / output["InputEventCount"][dataset_name]
 
     for key, obj in output.items():
-      if isinstance(obj, hist.Hist):
-        obj.scale(lumi_sfs, axis="dataset")
+        if isinstance(obj, hist.Hist):
+            obj.scale(lumi_sfs, axis="dataset")
     util.save(output, f"output{mcType}_ttgamma_condorFull_4jet_normalized.coffea")
 
 
 
 elif args.sample == 'Data':
-    output = processor.run_uproot_job(fileSet_Data_2016,
+    job_fileset = {key: fileset[key] for key in fileset if "Data" in key}
+    output = processor.run_uproot_job(job_fileset,
                                       treename           = 'Events',
                                       processor_instance = TTGammaProcessor(isMC=False),
                                       executor           = processor.futures_executor,
