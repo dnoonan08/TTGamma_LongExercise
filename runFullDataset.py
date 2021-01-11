@@ -1,14 +1,24 @@
-from coffea import util, processor
+from coffea import util, processor, hist
 from ttgamma import TTGammaProcessor
-from ttgamma.utils.fileSet_2016_LZ4 import fileSet_2016 as fileset
-from ttgamma.utils.fileSet_2016_LZ4 import fileSet_Data_2016
+#from ttgamma.utils.fileSet_2016_LZ4 import fileSet_2016 as fileset
+#from ttgamma.utils.fileSet_2016_LZ4 import fileSet_Data_2016
+from ttgramma.utils.fileset2021 import fileset
 
 import time
 import sys
 
+import argparse
+
+parser = argparse.ArgumentParser(description="Batch processing script for ttgamma analysis")
+parser.add_argument("sample", type=str, help="Name of process to run (Data, MCTTGamma, MCTTbar1l, MCTTbar2l, MCSingleTop, MCZJets, MCWJets, MCOther)")
+parser.add_argument("--chunksize", type=int, default=50000, help="Chunk size")
+parser.add_argument("--maxchunks", type=int, default=None, help="Max chunks")
+args = parser.parse_args()
+
 tstart = time.time()
 
-if 'MC' in sys.argv[1]:
+if 'MC' in args.sample:
+    '''
     mcEventYields = {
       'DYjetsM10to50_2016'        : 35114961.0, 
       'DYjetsM50_2016'            : 146280395.0, 
@@ -59,59 +69,77 @@ if 'MC' in sys.argv[1]:
       'WZ_2016'                   : 3997571.0, 
       'ZZ_2016'                   : 1988098.0
       }
+    '''
 
-    if sys.argv[1]=="MC":
-        fileSet = {k: fileset[k] for k in fileset}
+    if args.sample = "MC":
+        job_fileset = {key: fileset[key] for key in fileset if not "Data" in key}
         mcType = "MC"
-    if 'TTGamma' in sys.argv[1]:
-        fileSet = {k: fileset[k] for k in fileset if 'TTGamma' in k}
+    if 'TTGamma' in args.sample:
+        job_fileset = {k: fileset[k] for k in fileset if 'TTGamma' in k}
         mcType = 'MCTTGamma'
-    elif 'TTbar1l' in sys.argv[1]:
-        fileSet = {'TTbarPowheg_Semilept_2016': fileset['TTbarPowheg_Semilept_2016'],
+    elif 'TTbar1l' in args.sample:
+        job_fileset = {'TTbarPowheg_Semilept_2016': fileset['TTbarPowheg_Semilept_2016'],
                    'TTbarPowheg_Hadronic_2016': fileset['TTbarPowheg_Hadronic_2016']}
         mcType = 'MCTTbar1l'
-    elif 'TTbar2l' in sys.argv[1]:
-        fileSet = {'TTbarPowheg_Dilepton_2016': fileset['TTbarPowheg_Dilepton_2016']}
+    elif 'TTbar2l' in args.sample:
+        job_fileset = {'TTbarPowheg_Dilepton_2016': fileset['TTbarPowheg_Dilepton_2016']}
         mcType = 'MCTTbar2l'
-    elif 'SingleTop' in sys.argv[1]:
-        fileSet = {k: fileset[k] for k in fileset if ('ST' in k)}
+    elif 'SingleTop' in args.sample:
+        job_fileset = {k: fileset[k] for k in fileset if ('ST' in k)}
         mcType = 'MCSingletop'
-    elif 'ZJets' in sys.argv[1]:
-        fileSet = {k: fileset[k] for k in fileset if ('DY' in k)}
+    elif 'ZJets' in args.sample:
+        job_fileset = {k: fileset[k] for k in fileset if ('DY' in k)}
         mcType = 'MCZJets'
-    elif 'WJets' in sys.argv[1]:
-        fileSet = {k: fileset[k] for k in fileset if ('W1' in k or 'W2' in k or 'W3' in k or 'W4' in k)}
+    elif 'WJets' in args.sample:
+        job_fileset = {k: fileset[k] for k in fileset if ('W1' in k or 'W2' in k or 'W3' in k or 'W4' in k)}
         mcType = 'MCWJets'
     else:
-        fileSet = {k: fileset[k] for k in fileset if not ('TTGamma' in k or 'TTbar' in k or 'DY' in k or 'ST' in k or 'W1' in k or 'W2' in k or 'W3' in k or 'W4' in k)}
+        job_fileset = {k: fileset[k] for k in fileset if not ('TTGamma' in k or 'TTbar' in k or 'DY' in k or 'ST' in k or 'W1' in k or 'W2' in k or 'W3' in k or 'W4' in k)}
         mcType = 'MCOther'
 
-    print(fileSet.keys())
+    print(job_fileset.keys())
 
-    output = processor.run_uproot_job(fileSet,
-                                      treename='Events',
-                                      processor_instance=TTGammaProcessor(mcEventYields=mcEventYields),
-                                      executor=processor.futures_executor,
-                                      executor_args={'workers': 5, 'flatten': True},
-                                      chunksize=50000,
-                                      # maxchunks=1,
+    output = processor.run_uproot_job(job_fileset,
+                                      treename           = 'Events',
+                                      processor_instance = TTGammaProcessor(isMC=True),
+                                      executor           = processor.futures_executor,
+                                      executor_args      = {'workers': 4, 'flatten': True},
+                                      chunksize          = args.chunksize,
+                                      maxchunks          = args.maxchunks
                                   )
     
     elapsed = time.time() - tstart
     print("Total time: %.1f seconds"%elapsed)
     print("Total rate: %.1f events / second"%(output['EventCount'].value/elapsed))
-    
+
     util.save(output, f"output{mcType}_ttgamma_condorFull_4jet.coffea")
 
-    
-if sys.argv[1]=='Data':
+    # Compute original number of events for normalization
+    output['InputEventCount'] = processor.defaultdict_accumulator(int)
+    lumi_sfs = {}
+    for dataset_name, dataset_files in job_fileset.items():
+      for filename in dataset_files:
+        with uproot.open(filename) as fhandle:
+          output['InputEventCount'][dataset_name] +=fhandle["hEvents"].values()[2] - fhandle["hEvents"].values()[0]
+
+      # Calculate luminosity scale factor
+      lumi_sfs[dataset_name] = cross_sections[dataset_name] * 35.9 / output["InputEventCount"][dataset_name]
+
+    for key, obj in output.items():
+      if isinstance(obj, coffea.hist):
+        obj.scale(lumi_sfs)
+    util.save(output, f"output{mcType}_ttgamma_condorFull_4jet_normalized.coffea")
+
+
+
+elif args.sample == 'Data':
     output = processor.run_uproot_job(fileSet_Data_2016,
-                                      treename='Events',
-                                      processor_instance=TTGammaProcessor(),
-                                      executor=processor.futures_executor,
-                                      executor_args={'workers': 5, 'flatten': True},
-                                      chunksize=50000,
-                                      # maxchunks=1,
+                                      treename           = 'Events',
+                                      processor_instance = TTGammaProcessor(isMC=False),
+                                      executor           = processor.futures_executor,
+                                      executor_args      = {'workers': 4, 'flatten': True},
+                                      chunksize          = args.chunksize,
+                                      maxchunks          = args.maxchunks
                                   )
     
     elapsed = time.time() - tstart
