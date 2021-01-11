@@ -4,8 +4,8 @@ from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from ttgamma import TTGammaProcessor
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_2016 as fileset
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_Data_2016
-from .utils.fileset2021 import fileset
-from .utils.crossSections import *
+from ttgamma.utils.fileset2021 import fileset
+from ttgamma.utils.crossSections import *
 
 import time
 import sys
