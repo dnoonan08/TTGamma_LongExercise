@@ -1,3 +1,4 @@
+import uproot
 from coffea import util, processor, hist
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from ttgamma import TTGammaProcessor
