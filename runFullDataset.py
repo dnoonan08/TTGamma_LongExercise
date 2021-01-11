@@ -105,8 +105,8 @@ if 'MC' in args.sample:
     output = processor.run_uproot_job(job_fileset,
                                       treename           = 'Events',
                                       processor_instance = TTGammaProcessor(isMC=True),
-                                      executor           = processor.iterative_executor, #processor.futures_executor,
-                                      executor_args      = {'schema': NanoAODSchema,' workers': 4},#{'workers': 4, 'flatten': True},
+                                      executor           = processor.futures_executor, #processor.futures_executor,
+                                      executor_args      = {'schema': NanoAODSchema,' workers': 2},#{'workers': 4, 'flatten': True},
                                       chunksize          = args.chunksize,
                                       maxchunks          = args.maxchunks
                                   )
@@ -141,7 +141,7 @@ elif args.sample == 'Data':
                                       treename           = 'Events',
                                       processor_instance = TTGammaProcessor(isMC=False),
                                       executor           = processor.futures_executor,
-                                      executor_args      = {'workers': 2, 'flatten': True},
+                                      executor_args      = {'schema': NanoAODSchema,' workers': 2},#{'workers': 4, 'flatten': True},
                                       chunksize          = args.chunksize,
                                       maxchunks          = args.maxchunks
                                   )
