@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-tar -zxf coffeaenv.tar.gz
-source coffeaenv/bin/activate
+tar -zxf ttgenv.tar.gz
+source ttgenv/bin/activate
 
 tar -zxf ttgamma.tgz
 
-python runFullDataset.py $1
+python runFullDataset.py $1 --condor
 
