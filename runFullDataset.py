@@ -14,7 +14,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description="Batch processing script for ttgamma analysis")
 parser.add_argument("sample", type=str, help="Name of process to run (Data, MCTTGamma, MCTTbar1l, MCTTbar2l, MCSingleTop, MCZJets, MCWJets, MCOther)")
-parser.add_argument("--chunksize", type=int, default=50000, help="Chunk size")
+parser.add_argument("--chunksize", type=int, default=25000, help="Chunk size")
 parser.add_argument("--maxchunks", type=int, default=None, help="Max chunks")
 args = parser.parse_args()
 
@@ -125,8 +125,8 @@ if 'MC' in args.sample:
             with uproot.open(filename) as fhandle:
                 output['InputEventCount'][dataset_name] +=fhandle["hEvents"].values()[2] - fhandle["hEvents"].values()[0]
 
-      # Calculate luminosity scale factor
-      lumi_sfs[dataset_name] = crossSections[dataset_name] * 35.9 / output["InputEventCount"][dataset_name]
+        # Calculate luminosity scale factor
+        lumi_sfs[dataset_name] = crossSections[dataset_name] * lumis[2016] / output["InputEventCount"][dataset_name]
 
     for key, obj in output.items():
         if isinstance(obj, hist.Hist):
@@ -141,7 +141,7 @@ elif args.sample == 'Data':
                                       treename           = 'Events',
                                       processor_instance = TTGammaProcessor(isMC=False),
                                       executor           = processor.futures_executor,
-                                      executor_args      = {'workers': 4, 'flatten': True},
+                                      executor_args      = {'workers': 2, 'flatten': True},
                                       chunksize          = args.chunksize,
                                       maxchunks          = args.maxchunks
                                   )
