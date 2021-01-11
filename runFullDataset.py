@@ -2,7 +2,7 @@ from coffea import util, processor, hist
 from ttgamma import TTGammaProcessor
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_2016 as fileset
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_Data_2016
-from ttgramma.utils.fileset2021 import fileset
+from ttgamma.utils.fileset2021 import fileset
 
 import time
 import sys
