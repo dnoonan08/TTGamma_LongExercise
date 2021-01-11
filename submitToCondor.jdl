@@ -5,7 +5,7 @@ should_transfer_files = YES
 #WhenToTransferOutput  = ON_EXIT
 notification = never
 
-Transfer_Input_Files = coffeaenv.tar.gz, ttgamma.tgz, runFullDataset.py
+Transfer_Input_Files = ttgenv.tar.gz, ttgamma.tgz, runFullDataset.py
 
 Output = condorOutputs/coffeaOutput_$(cluster)_$(process).stdout
 Error  = condorOutputs/coffeaOutput_$(cluster)_$(process).stderr

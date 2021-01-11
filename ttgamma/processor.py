@@ -61,13 +61,14 @@ Jet_transformer = JetTransformer(jec=JECcorrector,junc=JECuncertainties, jer = J
 # Look at ProcessorABC to see the expected methods and what they are supposed to do
 class TTGammaProcessor(processor.ProcessorABC):
 #     def __init__(self, runNum = -1, eventNum = -1):
-    def __init__(self, runNum = -1, eventNum = -1, mcEventYields = None, jetSyst='nominal'):
+    def __init__(self, isMC=False, runNum=-1, eventNum=-1, mcEventYields=None, jetSyst='nominal'):
         ################################
         # INITIALIZE COFFEA PROCESSOR
         ################################
         ak.behavior.update(nanoaod.behavior)
 
-        self.mcEventYields = mcEventYields
+        #self.mcEventYields = mcEventYields
+        self.isMC = isMC
 
         if not jetSyst in ['nominal','JERUp','JERDown','JESUp','JESDown']:
             raise Exception(f'{jetSyst} is not in acceptable jet systematic types [nominal, JERUp, JERDown, JESUp, JESDown]')
@@ -95,14 +96,14 @@ class TTGammaProcessor(processor.ProcessorABC):
         ### Accumulator for holding histograms
         self._accumulator = processor.dict_accumulator({
             ##photon histograms
-            'pho_pt': hist.Hist("Counts", dataset_axis, pt_axis),
-            'photon_pt': hist.Hist("Counts", dataset_axis, pt_axis, phoCategory_axis, lep_axis, systematic_axis),
-            'photon_eta': hist.Hist("Counts", dataset_axis, eta_axis, phoCategory_axis, lep_axis, systematic_axis),
-            'photon_chIso': hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis, systematic_axis),
-            'photon_lepton_mass': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'pho_pt'                 : hist.Hist("Counts", dataset_axis, pt_axis),
+            'photon_pt'              : hist.Hist("Counts", dataset_axis, pt_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_eta'             : hist.Hist("Counts", dataset_axis, eta_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_chIso'           : hist.Hist("Counts", dataset_axis, chIso_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'photon_lepton_mass'     : hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis, systematic_axis),
             'photon_lepton_mass_3j0t': hist.Hist("Counts", dataset_axis, mass_axis, phoCategory_axis, lep_axis, systematic_axis),
-            'M3'      : hist.Hist("Counts", dataset_axis, m3_axis, phoCategory_axis, lep_axis, systematic_axis),
-            'EventCount':processor.value_accumulator(int)
+            'M3'                     : hist.Hist("Counts", dataset_axis, m3_axis, phoCategory_axis, lep_axis, systematic_axis),
+            'EventCount'             : processor.value_accumulator(int),
         })
 
         self.ele_id_sf = util.load(f'{cwd}/ScaleFactors/MuEGammaScaleFactors/ele_id_sf.coffea')
@@ -126,10 +127,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         ext.add_weight_sets([f"btag2016 * {cwd}/ScaleFactors/Btag/DeepCSV_2016LegacySF_V1.btag.csv"])
         ext.finalize()
         self.evaluator = ext.make_evaluator()
-        
         """
-
-        
         
     @property
     def accumulator(self):
@@ -141,7 +139,7 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         datasetFull = events.metadata['dataset']
         dataset=datasetFull.replace('_2016','')
-        isData = 'Data' in dataset
+        #isData = 'Data' in dataset
         
         rho = events.fixedGridRhoFastjetAll
 
@@ -151,11 +149,12 @@ class TTGammaProcessor(processor.ProcessorABC):
         events["Photon","chIso"] = (events.Photon.pfRelIso03_chg)*(events.Photon.pt)
 
         #Calculate the maximum pdgID of any of the particles in the GenPart history
-        idx = ak.to_numpy(ak.flatten(abs(events.GenPart.pdgId)))
-        par = ak.to_numpy(ak.flatten(events.GenPart.genPartIdxMother))
-        num = ak.to_numpy(ak.num(events.GenPart.pdgId))        
-        maxParentFlatten = maxHistoryPDGID(idx,par,num)
-        events["GenPart","maxParent"] = ak.unflatten(maxParentFlatten, num)
+        if self.isMC:
+            idx = ak.to_numpy(ak.flatten(abs(events.GenPart.pdgId)))
+            par = ak.to_numpy(ak.flatten(events.GenPart.genPartIdxMother))
+            num = ak.to_numpy(ak.num(events.GenPart.pdgId))        
+            maxParentFlatten = maxHistoryPDGID(idx,par,num)
+            events["GenPart","maxParent"] = ak.unflatten(maxParentFlatten, num)
 
         #################
         # OVERLAP REMOVAL
@@ -334,7 +333,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         #ARH: ADD JET TRANSFORMER HERE!
         """
         #update jet kinematics based on jete energy systematic uncertainties
-        if not isData:
+        if self.isMC:
         genJet = JaggedCandidateArray.candidatesfromcounts(
                 df['nGenJet'],
                 pt = df['GenJet_pt'],
@@ -519,7 +518,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         phoCategoryLoose = np.ones(len(events))
 
         # PART 2B: Uncomment to begin implementing photon categorization
-        if not isData:
+        if self.isMC:
             #### Photon categories, using pdgID of the matched gen particle for the leading photon in the event
             # reco photons matched to a generated photon
             matchedPho = ak.any(leadingPhoton.matched_gen.pdgId==22, axis=-1)
@@ -573,14 +572,14 @@ class TTGammaProcessor(processor.ProcessorABC):
         #create a processor Weights object, with the same length as the number of events in the chunk
         weights = processor.Weights(len(events))
         
-        if not 'Data' in dataset:
-            lumiWeight = np.ones(len(events))
-            nMCevents = self.mcEventYields[datasetFull]
-            xsec = crossSections[dataset]
-            luminosity = 35860.0
-            lumiWeight *= xsec * luminosity / nMCevents 
+        if self.isMC:
+            #lumiWeight = np.ones(len(events))
+            #nMCevents = self.mcEventYields[datasetFull]
+            #xsec = crossSections[dataset]
+            #luminosity = 35860.0
+            #lumiWeight *= xsec * luminosity / nMCevents 
 
-            weights.add('lumiWeight',lumiWeight)
+            #weights.add('lumiWeight',lumiWeight)
 
             """
 #            evtWeight *= xsec * lumis[year] / nMCevents
@@ -753,7 +752,7 @@ class TTGammaProcessor(processor.ProcessorABC):
         if not self.jetSyst=='nominal':
             systList=[self.jetSyst]
 
-        if isData:
+        if not self.isMC:
             systList = ['noweight']
 
         #ARH: temp hist for testing purposes
