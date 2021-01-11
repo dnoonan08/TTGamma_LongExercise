@@ -71,7 +71,7 @@ if 'MC' in args.sample:
       }
     '''
 
-    if args.sample = "MC":
+    if args.sample == "MC":
         job_fileset = {key: fileset[key] for key in fileset if not "Data" in key}
         mcType = "MC"
     if 'TTGamma' in args.sample:
