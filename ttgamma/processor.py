@@ -6,6 +6,7 @@ from coffea.nanoevents.methods import nanoaod
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from coffea.lookup_tools import extractor, dense_lookup
 from coffea.btag_tools import BTagScaleFactor
+from coffea.analysis_tools import PackedSelection
 
 import awkward as ak
 import numpy as np
@@ -449,30 +450,32 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         # 1. ADD SELECTION
         #add selection 'eleSel', for events passing the electron event selection, and muSel for those passing the muon event selection
-        #  ex: selection.add('testSelection', ak.to_numpy(event_mask))
+        #  ex: selection.add('testSelection', event_mask)
     
-        #ARH CoffeaQ: is there a better way than ak.to_numpy?
         #create a selection object
-        selection = processor.PackedSelection()
+        selection = PackedSelection()
 
-        selection.add('eleSel',ak.to_numpy(electron_eventSelection))
-        selection.add('muSel',ak.to_numpy(muon_eventSelection))
+        selection.add('eleSel',electron_eventSelection)
+        selection.add('muSel',muon_eventSelection)
+
+#        selection.add('eleSel',ak.to_numpy(electron_eventSelection))
+#        selection.add('muSel',ak.to_numpy(muon_eventSelection))
 
         #add two jet selection criteria
         #   First, 'jetSel' which selects events with at least 4 tightJet and at least one bTaggedJet
         nJets = 4
-        selection.add('jetSel',     ak.to_numpy( (ak.num(tightJet) >= nJets) & (ak.num(bTaggedJet) >= 1) ))
+        selection.add('jetSel',      (ak.num(tightJet) >= nJets) & (ak.num(bTaggedJet) >= 1) ) 
         #   Second, 'jetSel_3j0t' which selects events with at least 3 tightJet and exactly zero bTaggedJet
-        selection.add('jetSel_3j0t', ak.to_numpy((ak.num(tightJet) >= 3)     & (ak.num(bTaggedJet) == 0) ))
+        selection.add('jetSel_3j0t', (ak.num(tightJet) >= 3)     & (ak.num(bTaggedJet) == 0) ) 
 
         # add selection for events with exactly 0 tight photons
-        selection.add('zeroPho', ak.to_numpy(ak.num(tightPhoton) == 0))
+        selection.add('zeroPho', (ak.num(tightPhoton) == 0))
 
         # add selection for events with exactly 1 tight photon
-        selection.add('onePho',  ak.to_numpy(ak.num(tightPhoton) == 1))
+        selection.add('onePho',  (ak.num(tightPhoton) == 1))
 
         # add selection for events with exactly 1 loose photon
-        selection.add('loosePho',ak.to_numpy(ak.num(loosePhoton) == 1))
+        selection.add('loosePho',(ak.num(loosePhoton) == 1))
 
         ##################
         # EVENT VARIABLES
