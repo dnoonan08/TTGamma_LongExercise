@@ -102,12 +102,12 @@ if 'MC' in args.sample:
     output = processor.run_uproot_job(job_fileset,
                                       treename           = 'Events',
                                       processor_instance = TTGammaProcessor(isMC=True),
-                                      executor           = processor.futures_executor,
-                                      executor_args      = {'workers': 4, 'flatten': True},
+                                      executor           = processor.iterative_executor, #processor.futures_executor,
+                                      executor_args      = {'schema': NanoAODSchema,' workers': 4},#{'workers': 4, 'flatten': True},
                                       chunksize          = args.chunksize,
                                       maxchunks          = args.maxchunks
                                   )
-    
+
     elapsed = time.time() - tstart
     print("Total time: %.1f seconds"%elapsed)
     print("Total rate: %.1f events / second"%(output['EventCount'].value/elapsed))
