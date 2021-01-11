@@ -130,7 +130,7 @@ if 'MC' in args.sample:
 
     for key, obj in output.items():
       if isinstance(obj, hist.Hist):
-        obj.scale(lumi_sfs)
+        obj.scale(lumi_sfs, axis="dataset")
     util.save(output, f"output{mcType}_ttgamma_condorFull_4jet_normalized.coffea")
 
 
