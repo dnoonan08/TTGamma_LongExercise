@@ -149,11 +149,12 @@ class TTGammaProcessor(processor.ProcessorABC):
         events["Photon","chIso"] = (events.Photon.pfRelIso03_chg)*(events.Photon.pt)
 
         #Calculate the maximum pdgID of any of the particles in the GenPart history
-        idx = ak.to_numpy(ak.flatten(abs(events.GenPart.pdgId)))
-        par = ak.to_numpy(ak.flatten(events.GenPart.genPartIdxMother))
-        num = ak.to_numpy(ak.num(events.GenPart.pdgId))        
-        maxParentFlatten = maxHistoryPDGID(idx,par,num)
-        events["GenPart","maxParent"] = ak.unflatten(maxParentFlatten, num)
+        if self.isMC:
+            idx = ak.to_numpy(ak.flatten(abs(events.GenPart.pdgId)))
+            par = ak.to_numpy(ak.flatten(events.GenPart.genPartIdxMother))
+            num = ak.to_numpy(ak.num(events.GenPart.pdgId))        
+            maxParentFlatten = maxHistoryPDGID(idx,par,num)
+            events["GenPart","maxParent"] = ak.unflatten(maxParentFlatten, num)
 
         #################
         # OVERLAP REMOVAL
