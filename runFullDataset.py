@@ -129,7 +129,7 @@ if 'MC' in args.sample:
       lumi_sfs[dataset_name] = crossSections[dataset_name] * 35.9 / output["InputEventCount"][dataset_name]
 
     for key, obj in output.items():
-      if isinstance(obj, hist):
+      if isinstance(obj, hist.Hist):
         obj.scale(lumi_sfs)
     util.save(output, f"output{mcType}_ttgamma_condorFull_4jet_normalized.coffea")
 
