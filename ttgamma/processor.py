@@ -5,6 +5,7 @@ import coffea.processor as processor
 from coffea.nanoevents.methods import nanoaod
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from coffea.lookup_tools import extractor, dense_lookup
+from coffea.btag_tools import BTagScaleFactor
 
 import awkward as ak
 import numpy as np
@@ -18,17 +19,17 @@ from .utils.updateJets import updateJetP4
 import os.path
 cwd = os.path.dirname(__file__)
 
-#load lookup tools for pileup scale factors
+
+taggingEffLookup = util.load(f'{cwd}/utils/taggingEfficienciesDenseLookup.coffea')
+
+bJetScales = BTagScaleFactor(f"{cwd}/ScaleFactors/Btag/DeepCSV_2016LegacySF_V1.btag.csv","MEDIUM")
+
 puLookup = util.load(f'{cwd}/ScaleFactors/puLookup.coffea')
 puLookup_Down = util.load(f'{cwd}/ScaleFactors/puLookup_Down.coffea')
 puLookup_Up = util.load(f'{cwd}/ScaleFactors/puLookup_Up.coffea')
 
 
 """
-with open(f'{cwd}/utils/taggingEfficienciesDenseLookup.pkl', 'rb') as _file:
-    taggingEffLookup = pickle.load(_file)
-
-
 Jetext = extractor()
 Jetext.add_weight_sets([
         f"* * {cwd}/ScaleFactors/JEC/Summer16_07Aug2017_V11_MC_L1FastJet_AK4PFchs.jec.txt",
@@ -385,8 +386,8 @@ class TTGammaProcessor(processor.ProcessorABC):
         # 1. ADD SELECTION
         # select the subset of tightJet which pass the Deep CSV tagger
         bTagWP = 0.6321   #2016 DeepCSV working point
-        btagged = events.Jet.btagDeepB>bTagWP  
-        bTaggedJet= events.Jet[jetSelect & btagged]
+        btagged = tightJet.btagDeepB>bTagWP  
+        bTaggedJet= tightJet[btagged]
 
 
         #####################
@@ -571,104 +572,53 @@ class TTGammaProcessor(processor.ProcessorABC):
 
         #create a processor Weights object, with the same length as the number of events in the chunk
         weights = processor.Weights(len(events))
-        
+
         if self.isMC:
-            #lumiWeight = np.ones(len(events))
-            #nMCevents = self.mcEventYields[datasetFull]
-            #xsec = crossSections[dataset]
-            #luminosity = 35860.0
-            #lumiWeight *= xsec * luminosity / nMCevents 
+            lumiWeight = np.ones(len(events))
+            nMCevents = self.mcEventYields[datasetFull]
+            xsec = crossSections[dataset]
+            luminosity = 35860.0
+            lumiWeight *= xsec * luminosity / nMCevents 
 
             #weights.add('lumiWeight',lumiWeight)
 
-            """
-#            evtWeight *= xsec * lumis[year] / nMCevents
-
-            #puWeight = puLookup(datasetFull, events.Pileup.nTrueInt)
-            #puWeight_Up = puLookup_Up(datasetFull, events.Pileup.nTrueInt)
-            #puWeight_Down = puLookup_Down(datasetFull, events.Pileup.nTrueInt)
+            puWeight = puLookup[datasetFull](events.Pileup.nTrueInt)
+            puWeight_Up = puLookup_Up[datasetFull](events.Pileup.nTrueInt)
+            puWeight_Down = puLookup_Down[datasetFull](events.Pileup.nTrueInt)
             
-            #weights.add('puWeight',weight=puWeight, weightUp=puWeight_Up, weightDown=puWeight_Down)
-
-            bSF = BTagScaleFactor('ttgamma/ScaleFactors/Btag/DeepCSV_2016LegacySF_V1.btag.csv', 'medium')
-            bJetSF_heavy_up = bSF.eval('down', tighJets.hadronFlavour, tightJets.eta, tightJets.pt)
+            weights.add('puWeight',weight=puWeight, weightUp=puWeight_Up, weightDown=puWeight_Down)
 
             #btag key name
             #name / working Point / type / systematic / jetType
             #  ... / 0-loose 1-medium 2-tight / comb,mujets,iterativefit / central,up,down / 0-b 1-c 2-udcsg 
 
-            bJetSF_b = self.evaluator['btag%iDeepCSV_1_comb_central_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btagDeepB)
-            bJetSF_c = self.evaluator['btag%iDeepCSV_1_comb_central_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btagDeepB)
-            bJetSF_udcsg = self.evaluator['btag%iDeepCSV_1_incl_central_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btagDeepB)
-
-            bJetSF_b_up = self.evaluator['btag%iDeepCSV_1_comb_up_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btagDeepB)
-            bJetSF_c_up = self.evaluator['btag%iDeepCSV_1_comb_up_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btagDeepB)
-            bJetSF_udcsg_up = self.evaluator['btag%iDeepCSV_1_incl_up_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btagDeepB)
-
-            bJetSF_b_down = self.evaluator['btag%iDeepCSV_1_comb_down_0'%year](tightJets[tightJets.hadFlav==5].eta, tightJets[tightJets.hadFlav==5].pt, tightJets[tightJets.hadFlav==5].btagDeepB)
-            bJetSF_c_down = self.evaluator['btag%iDeepCSV_1_comb_down_1'%year](tightJets[tightJets.hadFlav==4].eta, tightJets[tightJets.hadFlav==4].pt, tightJets[tightJets.hadFlav==4].btagDeepB)
-            bJetSF_udcsg_down = self.evaluator['btag%iDeepCSV_1_incl_down_2'%year](tightJets[tightJets.hadFlav==0].eta, tightJets[tightJets.hadFlav==0].pt, tightJets[tightJets.hadFlav==0].btagDeepB)
-
-            bJetSF = JaggedArray(content = np.ones_like(tightJets.pt.content,dtype=np.float64), starts = tightJets.starts, stops = tightJets.stops)
-            bJetSF.content[(tightJets.hadFlav==5).content] = bJetSF_b.content
-            bJetSF.content[(tightJets.hadFlav==4).content] = bJetSF_c.content
-            bJetSF.content[(tightJets.hadFlav==0).content] = bJetSF_udcsg.content
-
-            bJetSF_heavy_up = JaggedArray(content = np.ones_like(tightJets.pt.content,dtype=np.float64), starts = tightJets.starts, stops = tightJets.stops)
-            bJetSF_heavy_up.content[(tightJets.hadFlav==5).content] = bJetSF_b_up.content
-            bJetSF_heavy_up.content[(tightJets.hadFlav==4).content] = bJetSF_c_up.content
-            bJetSF_heavy_up.content[(tightJets.hadFlav==0).content] = bJetSF_udcsg.content
-
-            bJetSF_heavy_down = JaggedArray(content = np.ones_like(tightJets.pt.content,dtype=np.float64), starts = tightJets.starts, stops = tightJets.stops)
-            bJetSF_heavy_down.content[(tightJets.hadFlav==5).content] = bJetSF_b_down.content
-            bJetSF_heavy_down.content[(tightJets.hadFlav==4).content] = bJetSF_c_down.content
-            bJetSF_heavy_down.content[(tightJets.hadFlav==0).content] = bJetSF_udcsg.content
-
-            bJetSF_light_up = JaggedArray(content = np.ones_like(tightJets.pt.content,dtype=np.float64), starts = tightJets.starts, stops = tightJets.stops)
-            bJetSF_light_up.content[(tightJets.hadFlav==5).content] = bJetSF_b.content
-            bJetSF_light_up.content[(tightJets.hadFlav==4).content] = bJetSF_c.content
-            bJetSF_light_up.content[(tightJets.hadFlav==0).content] = bJetSF_udcsg_up.content
-
-            bJetSF_light_down = JaggedArray(content = np.ones_like(tightJets.pt.content,dtype=np.float64), starts = tightJets.starts, stops = tightJets.stops)
-            bJetSF_light_down.content[(tightJets.hadFlav==5).content] = bJetSF_b.content
-            bJetSF_light_down.content[(tightJets.hadFlav==4).content] = bJetSF_c.content
-            bJetSF_light_down.content[(tightJets.hadFlav==0).content] = bJetSF_udcsg_down.content
+            bJetSF = bJetScales('central',tightJet.hadronFlavour, abs(tightJet.eta), tightJet.pt)
+            bJetSF_up = bJetScales('up',tightJet.hadronFlavour, abs(tightJet.eta), tightJet.pt)
+            bJetSF_down = bJetScales('down',tightJet.hadronFlavour, abs(tightJet.eta), tightJet.pt)
 
             ## mc efficiency lookup, data efficiency is eff* scale factor
-            btagEfficiencies = taggingEffLookup(datasetFull,tightJets.hadFlav,tightJets.pt,tightJets.eta)
+            taggingName = "TTGamma_SingleLept_2016"
+            if datasetFull in taggingEffLookup:
+                taggingName = datasetFull
+            btagEfficiencies = taggingEffLookup[taggingName](tightJet.hadronFlavour,tightJet.pt,abs(tightJet.eta))
             btagEfficienciesData = btagEfficiencies*bJetSF
-
-            btagEfficienciesData_b_up   = btagEfficiencies*bJetSF_heavy_up
-            btagEfficienciesData_b_down = btagEfficiencies*bJetSF_heavy_down
-            btagEfficienciesData_l_up   = btagEfficiencies*bJetSF_light_up
-            btagEfficienciesData_l_down = btagEfficiencies*bJetSF_light_down
+            btagEfficienciesData_up   = btagEfficiencies*bJetSF_up
+            btagEfficienciesData_down = btagEfficiencies*bJetSF_down
 
             ##probability is the product of all efficiencies of tagged jets, times product of 1-eff for all untagged jets
             ## https://twiki.cern.ch/twiki/bin/view/CMS/BTagSFMethods#1a_Event_reweighting_using_scale
             pMC          = ak.prod(btagEfficiencies[btagged], axis=-1)           * ak.prod((1.-btagEfficiencies[np.invert(btagged)]), axis=-1) 
             pData        = ak.prod(btagEfficienciesData[btagged], axis=-1)       * ak.prod((1.-btagEfficienciesData[np.invert(btagged)]),axis=-1)
-            pData_b_up   = ak.prod(btagEfficienciesData_b_up[btagged], axis=-1)  * ak.prod((1.-btagEfficienciesData_b_up[np.invert(btagged)]),axis=-1)
-            pData_b_down = ak.prod(btagEfficienciesData_b_down[btagged],axis=-1) * ak.prod((1.-btagEfficienciesData_b_down[np.invert(btagged)]),axis=-1)
-            pData_l_up   = ak.prod(btagEfficienciesData_l_up[btagged],axis=-1)   * ak.prod((1.-btagEfficienciesData_l_up[np.invert(btagged)]),axis=-1)
-            pData_l_down = ak.prod(btagEfficienciesData_l_down[btagged],axis=-1) * ak.prod((1.-btagEfficienciesData_l_down[np.invert(btagged)]),axis=-1)
+            pData_up   = ak.prod(btagEfficienciesData_up[btagged], axis=-1)  * ak.prod((1.-btagEfficienciesData_up[np.invert(btagged)]),axis=-1)
+            pData_down = ak.prod(btagEfficienciesData_down[btagged],axis=-1) * ak.prod((1.-btagEfficienciesData_down[np.invert(btagged)]),axis=-1)
 
-            pMC[pMC==0]=1. #avoid 0/0 error
+            pMC = ak.where(pMC==0,1,pMC)
             btagWeight = pData/pMC
+            btagWeight_up = pData_up/pMC
+            btagWeight_down = pData_down/pMC
+  
+            weights.add('btagWeight',weight=btagWeight, weightUp=btagWeight_up, weightDown=btagWeight_down)
 
-            pData[pData==0] = 1. #avoid divide by 0 error
-            btagWeight_b_up = pData_b_up/pData
-            btagWeight_b_down = pData_b_down/pData
-            btagWeight_l_up = pData_l_up/pData
-            btagWeight_l_down = pData_l_down/pData
-
-#            evtWeight *= btagWeight
-
-            weights.add('btagWeight',btagWeight)
-
-            weights.add('btagWeight_heavy',weight=np.ones_like(btagWeight), weightUp=btagWeight_b_up, weightDown=btagWeight_b_down)
-            weights.add('btagWeight_light',weight=np.ones_like(btagWeight), weightUp=btagWeight_l_up, weightDown=btagWeight_l_down)
-
-            """
             eleID = self.ele_id_sf(tightElectron.eta, tightElectron.pt)
             eleIDerr = self.ele_id_err(tightElectron.eta, tightElectron.pt)
             eleRECO = self.ele_reco_sf(tightElectron.eta, tightElectron.pt)
@@ -742,12 +692,12 @@ class TTGammaProcessor(processor.ProcessorABC):
         # PART 3: Uncomment to add histograms
 #        systList = ['noweight','nominal']
 
-        systList = ['nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+        systList = ['nominal','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown','puWeightUp','puWeightDown','btagWeightUp','btagWeightDown']
         #ARH: Missing: PU, btag
 
         # PART 4: SYSTEMATICS
         # uncomment the full list after systematics have been implemented        
-        #systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeight_lightUp','btagWeight_lightDown','btagWeight_heavyUp','btagWeight_heavyDown', 'ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
+        #systList = ['noweight','nominal','puWeightUp','puWeightDown','muEffWeightUp','muEffWeightDown','eleEffWeightUp','eleEffWeightDown','btagWeightUp','btagWeightDown','ISRUp', 'ISRDown', 'FSRUp', 'FSRDown', 'PDFUp', 'PDFDown', 'Q2ScaleUp', 'Q2ScaleDown']
 
         if not self.jetSyst=='nominal':
             systList=[self.jetSyst]
