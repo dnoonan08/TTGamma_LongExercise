@@ -1,4 +1,5 @@
 from coffea import util, processor, hist
+from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from ttgamma import TTGammaProcessor
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_2016 as fileset
 #from ttgamma.utils.fileSet_2016_LZ4 import fileSet_Data_2016
